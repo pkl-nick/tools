@@ -7,9 +7,9 @@ in demo mode and returns sample drafts, so the whole flow works offline.
 
 Models: the GPT-5.6 family on Azure OpenAI, called through the v1 API
 (no api-version) and the Responses API with Structured Outputs.
-    Luna  - video frames: high volume, cheapest
-    Terra - photos: the default
-    Sol   - second opinion when a draft comes back low-confidence
+    VIDEO_TIER (default luna)  - video frames: high volume, cheapest
+    PHOTO_TIER (default terra) - photos
+    Sol - also the second opinion when a draft comes back low-confidence
 """
 
 import os
@@ -31,7 +31,11 @@ DEPLOYMENT_LUNA = os.getenv("DEPLOYMENT_LUNA", "gpt-5.6-luna")
 DEPLOYMENT_TERRA = os.getenv("DEPLOYMENT_TERRA", "gpt-5.6-terra")
 DEPLOYMENT_SOL = os.getenv("DEPLOYMENT_SOL", "gpt-5.6-sol")   # set to "" to turn off escalation
 
-# Re-run an image on Sol when any draft's confidence is below this
+# Which tier reads each kind of upload: luna | terra | sol
+PHOTO_TIER = os.getenv("PHOTO_TIER", "terra")
+VIDEO_TIER = os.getenv("VIDEO_TIER", "luna")
+
+# Re-run an image on Sol when any draft's confidence is below this (skipped if Sol already read it)
 ESCALATE_BELOW = float(os.getenv("ESCALATE_BELOW", "0.6"))
 
 # Reasoning effort per tier: none | low | medium | high | xhigh | max
@@ -145,8 +149,9 @@ def analyze_photo(image_bytes: bytes, mime_type: str = 'image/jpeg',
     """
     Identify every rentable tool in a garage photo and draft a listing for each.
 
-    source: 'video' frames go to Luna (cheap, high volume); photos go to Terra.
-    If any draft is low-confidence, the image is re-run on Sol and Sol's answer is used.
+    source: 'video' frames go to VIDEO_TIER, photos to PHOTO_TIER.
+    If any draft is low-confidence, the image is re-run on Sol and Sol's answer is used
+    (unless Sol read it the first time).
 
     Returns:
         - List of normalized draft dicts (see normalize_draft)
@@ -157,12 +162,14 @@ def analyze_photo(image_bytes: bytes, mime_type: str = 'image/jpeg',
     if not ai_is_configured():
         return mock_analyze_photo(image_bytes), 0.0, True, 'demo'
 
-    tier = 'luna' if source == 'video' else 'terra'
+    tier = VIDEO_TIER if source == 'video' else PHOTO_TIER
+    if tier not in COST_PER_M:
+        raise ValueError(f"Unknown model tier {tier!r}; use luna, terra or sol")
     drafts, cost = vision_listing_call(image_bytes, mime_type, tier)
     used = deployment_for(tier)
 
     low_confidence = any(d['ai_confidence'] is not None and d['ai_confidence'] < ESCALATE_BELOW for d in drafts)
-    if DEPLOYMENT_SOL and low_confidence:
+    if DEPLOYMENT_SOL and low_confidence and tier != 'sol':
         try:
             sol_drafts, sol_cost = vision_listing_call(image_bytes, mime_type, 'sol')
             cost += sol_cost

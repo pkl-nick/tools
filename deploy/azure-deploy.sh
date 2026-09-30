@@ -3,9 +3,9 @@
 #
 #   bash deploy/azure-deploy.sh
 #
-# - Puts a new web app on the same App Service plan as the portfolio (no extra plan cost)
-# - Wires it to your Azure OpenAI resource (key read straight from Azure, never printed)
-# - Checks the three GPT-5.6 deployments exist
+# - Puts a new web app on nick-portfolio-plan, shared with the portfolio (no extra plan cost)
+# - Wires it to the nraoai Azure OpenAI resource (key read straight from Azure, never printed)
+# - Checks the GPT-5.6 deployments exist; photos go to Sol, video frames to Luna
 # - Clones this repo and zip-deploys it; Azure installs requirements.txt during the deploy
 #
 # Safe to re-run: it updates settings and redeploys the latest code on BRANCH.
@@ -13,15 +13,16 @@
 set -euo pipefail
 
 # ------------------------------------------------------------------ settings
-APP_NAME="toolshare-nick"                 # must be globally unique -> https://<APP_NAME>.azurewebsites.net
-SOURCE_APP="nick-ryan-portfolio"          # new app shares this app's App Service plan
-SOURCE_RG="nick-portfolio-rg"
-AOAI_NAME=""                              # Azure OpenAI resource name; blank = auto-detect if you have exactly one
+APP_NAME="${APP_NAME:-toolshare-app}"     # -> https://toolshare-app.azurewebsites.net ("toolshare" is taken)
+PLAN_NAME="nick-portfolio-plan"           # existing Linux B1 plan, shared with the portfolio
+PLAN_RG="nick-portfolio-rg"
+AOAI_NAME="nraoai"                        # Azure OpenAI resource with the GPT-5.6 deployments
 REPO_URL="https://github.com/pkl-nick/tools.git"
 BRANCH="claude/tool-sharing-platform-research-xzdoea"
 RUNTIME="PYTHON:3.11"
-# Deployment names in your Azure OpenAI resource (override: LUNA=... TERRA=... SOL=... bash azure-deploy.sh)
-DEPLOYMENTS=("${LUNA:-gpt-5.6-luna}" "${TERRA:-gpt-5.6-terra}" "${SOL:-gpt-5.6-sol}")
+DEPLOYMENTS=(gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol)
+PHOTO_TIER="sol"                          # photos are read by Sol
+VIDEO_TIER="luna"                         # video frames are read by Luna
 # ---------------------------------------------------------------------------
 
 step() { printf '\n==> %s\n' "$*"; }
@@ -30,17 +31,10 @@ fail() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 step "Subscription"
 az account show --query "{subscription:name, id:id}" -o table
 
-step "Finding the App Service plan used by $SOURCE_APP"
-PLAN_ID=$(az webapp show -g "$SOURCE_RG" -n "$SOURCE_APP" --query serverFarmId -o tsv)
-[ -n "$PLAN_ID" ] || fail "Could not find web app $SOURCE_APP in $SOURCE_RG"
-# A flat JMESPath list comes back from -o tsv one value per line
-mapfile -t PLAN < <(az appservice plan show --ids "$PLAN_ID" \
-  --query "[name, resourceGroup, sku.name, reserved, location]" -o tsv)
-PLAN_NAME=${PLAN[0]:-} PLAN_RG=${PLAN[1]:-} PLAN_SKU=${PLAN[2]:-} PLAN_LOCATION=${PLAN[4]:-}
-PLAN_LINUX=$(tr '[:upper:]' '[:lower:]' <<< "${PLAN[3]:-}")
-echo "plan: $PLAN_NAME  rg: $PLAN_RG  sku: $PLAN_SKU  linux: $PLAN_LINUX  region: $PLAN_LOCATION"
-[ -n "$PLAN_RG" ] || fail "Could not read details for plan $PLAN_ID"
-[ "$PLAN_LINUX" = "true" ] || fail "Plan $PLAN_NAME is not a Linux plan; Python apps need Linux"
+step "Checking App Service plan $PLAN_NAME"
+PLAN_SKU=$(az appservice plan show -g "$PLAN_RG" -n "$PLAN_NAME" --query sku.name -o tsv)
+[ -n "$PLAN_SKU" ] || fail "Plan $PLAN_NAME not found in $PLAN_RG"
+echo "plan: $PLAN_NAME  rg: $PLAN_RG  sku: $PLAN_SKU"
 ALWAYS_ON=true
 case "$PLAN_SKU" in
   F1|D1) ALWAYS_ON=false
@@ -51,23 +45,14 @@ step "Creating web app $APP_NAME (skipped if it already exists)"
 if az webapp show -g "$PLAN_RG" -n "$APP_NAME" --query name -o tsv >/dev/null 2>&1; then
   echo "exists"
 else
-  az webapp create -g "$PLAN_RG" -p "$PLAN_ID" -n "$APP_NAME" --runtime "$RUNTIME" --output none
+  az webapp create -g "$PLAN_RG" -p "$PLAN_NAME" -n "$APP_NAME" --runtime "$RUNTIME" --output none \
+    || fail "Could not create $APP_NAME. If the name is taken, re-run with APP_NAME=<another-name> bash azure-deploy.sh"
   echo "created"
 fi
 
-step "Locating the Azure OpenAI resource"
-if [ -z "$AOAI_NAME" ]; then
-  mapfile -t AOAI_ROWS < <(az cognitiveservices account list \
-    --query "[?kind=='OpenAI' || kind=='AIServices'].[name, resourceGroup]" -o tsv)
-  if [ "${#AOAI_ROWS[@]}" -ne 1 ]; then
-    printf '%s\n' "${AOAI_ROWS[@]:-(none found)}"
-    fail "Found ${#AOAI_ROWS[@]} Azure OpenAI resources. Set AOAI_NAME at the top of this script."
-  fi
-  IFS=$'\t' read -r AOAI_NAME AOAI_RG <<< "${AOAI_ROWS[0]}"
-else
-  AOAI_RG=$(az cognitiveservices account list --query "[?name=='$AOAI_NAME'].resourceGroup | [0]" -o tsv)
-  [ -n "$AOAI_RG" ] || fail "Azure OpenAI resource $AOAI_NAME not found"
-fi
+step "Azure OpenAI resource $AOAI_NAME"
+AOAI_RG=$(az cognitiveservices account list --query "[?name=='$AOAI_NAME'].resourceGroup | [0]" -o tsv)
+[ -n "$AOAI_RG" ] || fail "Azure OpenAI resource $AOAI_NAME not found in this subscription"
 # AI Services resources list several endpoints; prefer the openai.azure.com one the v1 API uses
 AOAI_ENDPOINT=$(az cognitiveservices account show -n "$AOAI_NAME" -g "$AOAI_RG" \
   --query "properties.endpoints.\"OpenAI Language Model Instance API\" || properties.endpoint" -o tsv)
@@ -90,6 +75,8 @@ SETTINGS=(
   "DEPLOYMENT_LUNA=${DEPLOYMENTS[0]}"
   "DEPLOYMENT_TERRA=${DEPLOYMENTS[1]}"
   "DEPLOYMENT_SOL=${DEPLOYMENTS[2]}"
+  "PHOTO_TIER=$PHOTO_TIER"
+  "VIDEO_TIER=$VIDEO_TIER"
   "TOOLS_DB_PATH=/home/data/tools.db"
   "UPLOAD_FOLDER=/home/data/uploads"
   "SCM_DO_BUILD_DURING_DEPLOYMENT=true"
@@ -100,7 +87,7 @@ if ! grep -qx "FLASK_SECRET_KEY" <<< "$EXISTING_SETTINGS"; then
 fi
 az webapp config appsettings set -g "$PLAN_RG" -n "$APP_NAME" --settings "${SETTINGS[@]}" --output none
 unset AOAI_KEY SETTINGS
-echo "set: ENDPOINT_URL, AZURE_OPENAI_API_KEY, DEPLOYMENT_*, TOOLS_DB_PATH, UPLOAD_FOLDER, SCM_DO_BUILD_DURING_DEPLOYMENT, FLASK_SECRET_KEY"
+echo "set: ENDPOINT_URL, AZURE_OPENAI_API_KEY, DEPLOYMENT_*, PHOTO_TIER=$PHOTO_TIER, VIDEO_TIER=$VIDEO_TIER, TOOLS_DB_PATH, UPLOAD_FOLDER, SCM_DO_BUILD_DURING_DEPLOYMENT, FLASK_SECRET_KEY"
 
 step "Runtime configuration"
 az webapp config set -g "$PLAN_RG" -n "$APP_NAME" --output none \

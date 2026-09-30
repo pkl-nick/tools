@@ -318,3 +318,14 @@ def test_escalation_can_be_disabled(live_ai, monkeypatch):
                         lambda: fake_responses_client({'gpt-5.6-terra': [tool_json('Blurry', 0.2)]}, calls))
     drafts, _, _, used = listing_utils.analyze_photo(b'img')
     assert used == 'gpt-5.6-terra' and len(calls) == 1 and drafts[0]['name'] == 'Blurry'
+
+
+def test_photos_on_sol_do_not_escalate_to_sol_again(live_ai, monkeypatch):
+    calls = []
+    monkeypatch.setattr(listing_utils, 'PHOTO_TIER', 'sol')
+    monkeypatch.setattr(listing_utils, 'get_client',
+                        lambda: fake_responses_client({'gpt-5.6-sol': [tool_json('Blurry', 0.2)]}, calls))
+    drafts, cost, _, used = listing_utils.analyze_photo(b'img', source='photo')
+    assert used == 'gpt-5.6-sol' and len(calls) == 1
+    assert calls[0]['reasoning'] == {'effort': 'medium'}
+    assert cost == pytest.approx(1500 / 1e6 * 5 + 500 / 1e6 * 30)   # Sol pricing

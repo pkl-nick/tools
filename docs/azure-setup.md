@@ -25,6 +25,7 @@ Create three deployments in the Azure OpenAI portal (Deployments → Deploy mode
 - **Other names:** if you name the deployments differently, set `DEPLOYMENT_LUNA`, `DEPLOYMENT_TERRA` and `DEPLOYMENT_SOL`.
 - **Turning Sol off:** set `DEPLOYMENT_SOL` to empty.
 - **Tuning:** effort per tier is adjustable with `LUNA_EFFORT`, `TERRA_EFFORT` and `SOL_EFFORT`.
+- **Routing:** `PHOTO_TIER` and `VIDEO_TIER` choose which tier reads each kind of upload (defaults `terra` and `luna`). The deployed app uses `PHOTO_TIER=sol`, so photos are read by Sol and aren't re-checked. Only video frames can go through the Sol second opinion.
 
 ### API: v1 + Responses
 
