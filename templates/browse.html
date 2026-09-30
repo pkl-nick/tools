@@ -1,79 +1,84 @@
 {% extends "base.html" %}
 {% block title %}tools for rent{% endblock %}
+{% macro browse_url() -%}
+{%- set p = dict(q=q, category=category, platform=platform, max_miles=max_miles|int, view=view) -%}
+{%- set _ = p.update(kwargs) -%}
+{{ url_for('browse', **p) }}
+{%- endmacro %}
 {% block content %}
-<div class="search-layout">
-    <form class="sidebar" method="get">
-        <h3>search tools for rent</h3>
-        <label><input type="search" name="q" value="{{ q }}" placeholder="spring compressor, pressure washer..."></label>
-        <label>category
-            <select name="category">
-                <option value="">all categories</option>
-                {% for c in categories %}
-                <option value="{{ c }}" {{ 'selected' if c == category }}>{{ c | lower }}</option>
-                {% endfor %}
-            </select>
-        </label>
-        <label>battery system
-            <select name="platform">
-                <option value="">any</option>
-                {% if my_platforms %}
-                <option value="mine" {{ 'selected' if platform == 'mine' }}>fits my batteries</option>
-                {% endif %}
-                {% for p in platforms %}
-                <option value="{{ p }}" {{ 'selected' if p == platform }}>{{ p }}</option>
-                {% endfor %}
-            </select>
-        </label>
-        <label>distance
-            <select name="max_miles">
-                {% for m in [2, 5, 10, 25] %}
-                <option value="{{ m }}" {{ 'selected' if max_miles == m }}>within {{ m }} mi</option>
-                {% endfor %}
-            </select>
-        </label>
-        <button type="submit" class="btn">search</button>
+<nav class="chips" aria-label="Categories">
+    <a class="chip {{ 'active' if not category }}" href="{{ browse_url(category='') }}">all</a>
+    {% for c in categories %}
+    <a class="chip {{ 'active' if c == category }}" href="{{ browse_url(category=c) }}">{{ c | lower }}</a>
+    {% endfor %}
+</nav>
+
+<form class="toolbar" method="get">
+    <input type="hidden" name="q" value="{{ q }}">
+    <input type="hidden" name="category" value="{{ category }}">
+    <input type="hidden" name="view" value="{{ view }}">
+    <select name="platform" onchange="this.form.submit()" aria-label="Battery system">
+        <option value="">any power source</option>
         {% if my_platforms %}
-        <p class="muted small">your batteries: {{ my_platforms | join(', ') }}</p>
+        <option value="mine" {{ 'selected' if platform == 'mine' }}>⚡ fits my batteries</option>
         {% endif %}
-    </form>
+        {% for p in platforms %}
+        <option value="{{ p }}" {{ 'selected' if p == platform }}>{{ p }}</option>
+        {% endfor %}
+    </select>
+    <select name="max_miles" onchange="this.form.submit()" aria-label="Distance">
+        {% for m in [2, 5, 10, 25] %}
+        <option value="{{ m }}" {{ 'selected' if max_miles == m }}>within {{ m }} mi</option>
+        {% endfor %}
+    </select>
+    <noscript><button class="btn" type="submit">apply</button></noscript>
+    <div class="view-toggle" role="group" aria-label="View">
+        <a class="{{ 'active' if view == 'list' }}" href="{{ browse_url(view='list') }}" title="list view">
+            <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </a>
+        <a class="{{ 'active' if view == 'gallery' }}" href="{{ browse_url(view='gallery') }}" title="gallery view">
+            <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg>
+        </a>
+    </div>
+</form>
 
-    <section>
-        <div class="bar">
-            <span>tools for rent near {{ current_user.neighborhood | lower }}</span>
-            <span class="muted small">{{ tools | length }} result{{ 's' if tools | length != 1 }} &middot; closest first</span>
-        </div>
-
-        {% if tools %}
-        <ul class="results">
-            {% for t in tools %}
-            <li class="result">
-                <a class="thumb" href="{{ url_for('tool_detail', tool_id=t.id) }}">
-                    {% if t.photo_path %}
-                    <img src="{{ url_for('uploaded_file', filename=t.photo_path) }}" alt="" loading="lazy">
-                    {% else %}
-                    <img class="placeholder" src="{{ url_for('static', filename='img/tool.svg') }}" alt="">
-                    {% endif %}
-                </a>
-                <div>
-                    <a class="result-title" href="{{ url_for('tool_detail', tool_id=t.id) }}">{{ t.name }}</a>
-                    <div class="result-meta">
-                        {{ t.neighborhood | lower }} &middot; {{ t.miles }} mi &middot; {{ t.category | lower }}
-                        {% if t.battery_platform %}
-                        &middot; <span class="tag {{ 'tag-green' if t.battery_platform in my_platforms }}">{{ t.battery_platform }}{{ ' ✓' if t.battery_platform in my_platforms }}</span>
-                        {% endif %}
-                        {% if t.owner_id == current_user.id %}&middot; <span class="tag tag-blue">yours</span>{% endif %}
-                    </div>
-                </div>
-                <div class="result-price">${{ '%.0f' | format(t.daily_price) }}<span class="muted">/day</span></div>
-            </li>
-            {% endfor %}
-        </ul>
-        {% else %}
-        <div class="empty">
-            <p>No tools match those filters yet.</p>
-            <p><a href="{{ url_for('list_tools') }}">post your own tools</a></p>
-        </div>
-        {% endif %}
-    </section>
+<div class="result-head">
+    <h1>{{ ('"' ~ q ~ '"') if q else (category | lower if category else 'tools for rent') }}</h1>
+    <span class="muted small">{{ tools | length }} result{{ 's' if tools | length != 1 }} · closest first{% if my_platforms %} · your batteries: {{ my_platforms | join(', ') }}{% endif %}</span>
 </div>
+
+{% if tools %}
+<ul class="results {{ 'gallery' if view == 'gallery' }}">
+    {% for t in tools %}
+    <li class="result">
+        <a class="thumb" href="{{ url_for('tool_detail', tool_id=t.id) }}" tabindex="-1">
+            {% if t.photo_path %}
+            <img src="{{ url_for('uploaded_file', filename=t.photo_path) }}" alt="" loading="lazy">
+            {% else %}
+            <img class="placeholder" src="{{ url_for('static', filename='img/tool.svg') }}" alt="">
+            {% endif %}
+        </a>
+        <div class="result-main">
+            <a class="result-title" href="{{ url_for('tool_detail', tool_id=t.id) }}">{{ t.name }}</a>
+            <div class="result-meta">
+                <span>{{ t.neighborhood | lower }}</span><span>{{ t.miles }} mi</span><span>{{ t.category | lower }}</span>
+            </div>
+            <div class="tags">
+                {% if t.battery_platform %}
+                <span class="tag {{ 'tag-green' if t.battery_platform in my_platforms }}">{{ '⚡ ' if t.battery_platform in my_platforms }}{{ t.battery_platform }}</span>
+                {% endif %}
+                {% if t.risk_tier == 'waiver' %}<span class="tag">safety ack</span>{% endif %}
+                {% if t.owner_id == current_user.id %}<span class="tag tag-blue">yours</span>{% endif %}
+            </div>
+        </div>
+        <div class="result-price">${{ '%.0f' | format(t.daily_price) }}<span>/day</span></div>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<div class="empty">
+    <p>No tools match those filters yet.</p>
+    <a class="btn btn-primary" href="{{ url_for('list_tools') }}">post your own tools</a>
+</div>
+{% endif %}
 {% endblock %}

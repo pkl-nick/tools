@@ -120,6 +120,7 @@ def browse():
     q = request.args.get('q', '').strip()
     category = request.args.get('category', '')
     platform = request.args.get('platform', '')
+    view = 'gallery' if request.args.get('view') == 'gallery' else 'list'
     try:
         max_miles = float(request.args.get('max_miles', 10))
     except ValueError:
@@ -154,7 +155,7 @@ def browse():
     tools.sort(key=lambda t: t['miles'])
 
     return render_template('browse.html', tools=tools, q=q, category=category, platform=platform,
-                           max_miles=max_miles, categories=listing_utils.CATEGORIES,
+                           max_miles=max_miles, view=view, categories=listing_utils.CATEGORIES,
                            platforms=listing_utils.BATTERY_PLATFORMS,
                            my_platforms=user_platforms(user))
 

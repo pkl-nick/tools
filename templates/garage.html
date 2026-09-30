@@ -1,12 +1,16 @@
 {% extends "base.html" %}
 {% block title %}my garage{% endblock %}
-{% block crumb %}<span class="sep">&gt;</span><span>my garage</span>{% endblock %}
+{% block crumb %}<span class="sep">›</span><span>my garage</span>{% endblock %}
 {% macro status_tag(status) -%}
 <span class="tag status-{{ status }}">{{ status }}</span>
 {%- endmacro %}
 {% block content %}
 <h1>{{ current_user.name }}'s garage</h1>
-<p class="muted">{{ listings | length }} tool{{ 's' if listings | length != 1 }} posted &middot; ${{ '%.2f' | format(earnings) }} earned from accepted rentals</p>
+<div class="stats">
+    <div class="stat"><b>{{ listings | length }}</b><span>tool{{ 's' if listings | length != 1 }} posted</span></div>
+    <div class="stat"><b>{{ incoming | selectattr('status', 'equalto', 'requested') | list | length }}</b><span>requests waiting</span></div>
+    <div class="stat"><b>${{ '%.2f' | format(earnings) }}</b><span>earned from accepted rentals</span></div>
+</div>
 
 <div class="bar">requests for your tools</div>
 {% if incoming %}

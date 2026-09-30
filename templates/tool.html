@@ -1,16 +1,18 @@
 {% extends "base.html" %}
 {% block title %}{{ tool.name }}{% endblock %}
-{% block crumb %}<span class="sep">&gt;</span><span>{{ tool.category | lower }}</span>{% endblock %}
+{% block crumb %}<span class="sep">›</span><a href="{{ url_for('browse', category=tool.category) }}">{{ tool.category | lower }}</a>{% endblock %}
 {% block content %}
-<a class="back" href="{{ url_for('browse') }}">&laquo; back to search</a>
-
-<h1 class="posting-title">
-    {{ tool.name }} - <span class="price">${{ '%.0f' | format(tool.daily_price) }}/day</span>
-    <span class="hood">({{ tool.neighborhood | lower }})</span>
-</h1>
+<a class="back" href="{{ url_for('browse') }}">‹ back to search</a>
 
 <div class="posting">
     <div>
+        <h1 class="posting-title">{{ tool.name }}</h1>
+        <div class="posting-sub">
+            <span class="price">${{ '%.0f' | format(tool.daily_price) }}/day</span>
+            <span>{{ tool.neighborhood | lower }} · {{ miles }} mi away</span>
+            <span>posted by {{ tool.owner_name }}</span>
+        </div>
+
         <div class="posting-media">
             {% if tool.photo_path %}
             <img src="{{ url_for('uploaded_file', filename=tool.photo_path) }}" alt="{{ tool.name }}">
@@ -19,10 +21,21 @@
             {% endif %}
         </div>
 
+        <div class="attrgroup">
+            {% if tool.brand %}<div class="attr"><span>make</span><b>{{ tool.brand }}</b></div>{% endif %}
+            {% if tool.model %}<div class="attr"><span>model</span><b>{{ tool.model }}</b></div>{% endif %}
+            <div class="attr"><span>power</span><b>{{ tool.power_source | lower }}</b></div>
+            {% if tool.battery_platform %}
+            <div class="attr"><span>battery</span><b>{{ tool.battery_platform }}</b>{% if fits_my_batteries %} <span class="tag tag-green">⚡ fits yours</span>{% endif %}</div>
+            {% endif %}
+            <div class="attr"><span>includes</span><b>{{ tool.included_items or '—' }}</b></div>
+            <div class="attr"><span>deposit</span><b>${{ '%.0f' | format(tool.deposit) }} hold</b></div>
+        </div>
+
         <div class="posting-body">{{ tool.description }}</div>
 
         {% if tool.safety_notes %}
-        <p class="small"><b>safety note from owner:</b> {{ tool.safety_notes }}</p>
+        <div class="safety"><b>safety note:</b> {{ tool.safety_notes }}</div>
         {% endif %}
 
         {% if addons %}
@@ -43,28 +56,11 @@
     </div>
 
     <aside>
-        <div class="attrgroup">
-            {% if tool.brand %}<div>make: <b>{{ tool.brand }}</b></div>{% endif %}
-            {% if tool.model %}<div>model: <b>{{ tool.model }}</b></div>{% endif %}
-            <div>power: <b>{{ tool.power_source | lower }}</b></div>
-            {% if tool.battery_platform %}
-            <div>battery: <b>{{ tool.battery_platform }}</b>
-                {% if fits_my_batteries %}<span class="tag tag-green">fits yours</span>{% endif %}</div>
-            {% endif %}
-            <div>includes: <b>{{ tool.included_items or '—' }}</b></div>
-        </div>
-        <div class="attrgroup">
-            <div>rate: <b>${{ '%.0f' | format(tool.daily_price) }}/day</b> (25% off 7+ days)</div>
-            <div>deposit: <b>${{ '%.0f' | format(tool.deposit) }}</b> card hold, released on return</div>
-            <div>owner: <b>{{ tool.owner_name }}</b></div>
-            <div>distance: <b>{{ miles }} mi</b></div>
-        </div>
-
         {% if tool.owner_id == current_user.id %}
         <div class="note">This is your listing. Switch users (top right) to test renting it.</div>
         {% else %}
         <form class="reply-box" method="post" action="{{ url_for('book_tool', tool_id=tool.id) }}" id="bookForm" data-tool-id="{{ tool.id }}">
-            <h2>request to rent</h2>
+            <div class="reply-price">${{ '%.0f' | format(tool.daily_price) }} <span>/ day · 25% off 7+ days</span></div>
             <div class="row">
                 <label>pick up<input type="date" name="start" min="{{ today }}" value="{{ today }}" required></label>
                 <label>return<input type="date" name="end" min="{{ today }}" value="{{ today }}" required></label>
@@ -80,8 +76,8 @@
                     {% endfor %}
                 </select>
             </label>
-            <label>message to owner (optional)
-                <textarea name="message" rows="2" placeholder="what's the project?"></textarea>
+            <label>message to owner
+                <textarea name="message" rows="2" placeholder="what's the project? (optional)"></textarea>
             </label>
 
             {% if tool.risk_tier == 'waiver' %}
@@ -92,8 +88,8 @@
             {% endif %}
 
             <div class="quote" id="quote">pick dates to see the price.</div>
-            <button type="submit" class="btn btn-primary btn-wide">send request</button>
-            <p class="muted small">You're only charged if the owner accepts.</p>
+            <button type="submit" class="btn btn-primary btn-wide">request to rent</button>
+            <p class="muted small" style="text-align:center;margin:.5rem 0 0">you're only charged if the owner accepts</p>
         </form>
         {% endif %}
     </aside>

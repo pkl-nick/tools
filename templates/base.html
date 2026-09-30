@@ -3,26 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}tools for rent{% endblock %} - toolshare</title>
+    <meta name="color-scheme" content="light dark">
+    <title>{% block title %}tools for rent{% endblock %} · toolshare</title>
     <link rel="icon" href="{{ url_for('static', filename='img/tool.svg') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <header class="topbar">
-        <div class="crumbs">
+        <div class="topbar-inner">
             <a class="brand" href="{{ url_for('browse') }}">toolshare</a>
-            <span class="sep">&gt;</span>
-            <span>{{ current_user.neighborhood | lower }}</span>
-            <span class="sep">&gt;</span>
-            <a href="{{ url_for('browse') }}">tools for rent</a>
-            {% block crumb %}{% endblock %}
+            <form class="topsearch" action="{{ url_for('browse') }}" method="get" role="search">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <input type="search" name="q" value="{{ request.args.get('q', '') if request.endpoint == 'browse' }}" placeholder="search tools near {{ current_user.neighborhood | lower }}" aria-label="Search tools">
+            </form>
+            <nav class="toplinks">
+                <a href="{{ url_for('garage') }}" class="{{ 'active' if request.endpoint == 'garage' }}">my garage</a>
+                {% if draft_count %}
+                <a href="{{ url_for('review_drafts') }}" class="{{ 'active' if request.endpoint == 'review_drafts' }}">drafts <span class="count">{{ draft_count }}</span></a>
+                {% endif %}
+                <a href="{{ url_for('list_tools') }}" class="btn btn-primary btn-post">+ post</a>
+            </nav>
         </div>
-        <nav class="toplinks">
-            <a class="post-link" href="{{ url_for('list_tools') }}">post your tools</a>
-            {% if draft_count %}
-            <a href="{{ url_for('review_drafts') }}">review drafts ({{ draft_count }})</a>
-            {% endif %}
-            <a href="{{ url_for('garage') }}">my garage</a>
+        <div class="subbar">
+            <div class="crumbs">
+                <span>{{ current_user.neighborhood | lower }}</span>
+                <span class="sep">›</span>
+                <a href="{{ url_for('browse') }}">tools for rent</a>
+                {% block crumb %}{% endblock %}
+            </div>
             <form class="user-switch" method="post" id="userSwitch">
                 <label for="userSelect">acting as</label>
                 <select id="userSelect">
@@ -31,12 +42,12 @@
                     {% endfor %}
                 </select>
             </form>
-        </nav>
+        </div>
     </header>
 
     {% if not ai_live %}
     <div class="demo-banner">
-        demo mode: photo recognition returns sample drafts. set <code>ENDPOINT_URL</code> and <code>AZURE_OPENAI_API_KEY</code> to use the real model.
+        <span class="dot"></span> demo mode: photo recognition returns sample drafts. set <code>ENDPOINT_URL</code> and <code>AZURE_OPENAI_API_KEY</code> to use the real model.
     </div>
     {% endif %}
 
@@ -51,7 +62,13 @@
     </main>
 
     <footer class="footer">
-        &copy; 2026 toolshare &middot; <a href="{{ url_for('browse') }}">tools for rent</a> &middot; <a href="{{ url_for('list_tools') }}">post</a> &middot; <a href="{{ url_for('garage') }}">my garage</a> &middot; safety &middot; terms
+        <span class="brand-sm">toolshare</span>
+        <a href="{{ url_for('browse') }}">tools for rent</a>
+        <a href="{{ url_for('list_tools') }}">post</a>
+        <a href="{{ url_for('garage') }}">my garage</a>
+        <span class="muted">safety</span>
+        <span class="muted">terms</span>
+        <span class="muted">&copy; 2026</span>
     </footer>
 
     <script>

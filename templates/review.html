@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}review drafts{% endblock %}
-{% block crumb %}<span class="sep">&gt;</span><span>review drafts</span>{% endblock %}
+{% block crumb %}<span class="sep">›</span><span>review drafts</span>{% endblock %}
 {% block content %}
 <h1>review your drafts</h1>
-<p class="muted">Check what the AI found, fix anything it got wrong, then post them all at once.</p>
+<p class="lede">Check what the AI found, fix anything it got wrong, then post them all at once.</p>
 
 {% if drafts %}
 <form method="post" id="reviewForm">
@@ -77,7 +77,7 @@
     </div>
     {% endfor %}
 
-    <div class="bulk-bar">
+    <div class="bulk-bar bottom">
         <button type="submit" class="btn btn-primary">save</button>
     </div>
 </form>
