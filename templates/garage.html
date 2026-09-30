@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}my garage{% endblock %}
+{% block crumb %}<span class="sep">&gt;</span><span>my garage</span>{% endblock %}
+{% macro status_tag(status) -%}
+<span class="tag status-{{ status }}">{{ status }}</span>
+{%- endmacro %}
+{% block content %}
+<h1>{{ current_user.name }}'s garage</h1>
+<p class="muted">{{ listings | length }} tool{{ 's' if listings | length != 1 }} posted &middot; ${{ '%.2f' | format(earnings) }} earned from accepted rentals</p>
+
+<div class="bar">requests for your tools</div>
+{% if incoming %}
+<div class="table-wrap">
+<table>
+    <thead><tr><th>Tool</th><th>Renter</th><th>Dates</th><th>Delivery</th><th>You get</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for b in incoming %}
+    <tr>
+        <td>{{ b.tool_name }}{% if b.message %}<div class="muted small">"{{ b.message }}"</div>{% endif %}</td>
+        <td>{{ b.renter_name }}</td>
+        <td>{{ b.start_date }} → {{ b.end_date }} <span class="muted small">({{ b.days }}d)</span></td>
+        <td>{{ 'yes, $%.2f' | format(b.delivery_fee) if b.delivery else 'pickup' }}</td>
+        <td>${{ '%.2f' | format(b.owner_payout) }}</td>
+        <td>{{ status_tag(b.status) }}</td>
+        <td class="row-actions">
+            {% if b.status == 'requested' %}
+            <form method="post" action="{{ url_for('update_booking', booking_id=b.id, action='accept') }}"><button class="btn btn-small">accept</button></form>
+            <form method="post" action="{{ url_for('update_booking', booking_id=b.id, action='decline') }}"><button class="btn btn-small">decline</button></form>
+            {% elif b.status == 'accepted' %}
+            <form method="post" action="{{ url_for('update_booking', booking_id=b.id, action='returned') }}"><button class="btn btn-small">mark returned</button></form>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="muted">No requests yet.</p>
+{% endif %}
+
+<div class="bar">tools you're renting</div>
+{% if rentals %}
+<div class="table-wrap">
+<table>
+    <thead><tr><th>Tool</th><th>Owner</th><th>Dates</th><th>Total</th><th>Deposit hold</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for b in rentals %}
+    <tr>
+        <td><a href="{{ url_for('tool_detail', tool_id=b.tool_id) }}">{{ b.tool_name }}</a></td>
+        <td>{{ b.owner_name }}</td>
+        <td>{{ b.start_date }} → {{ b.end_date }}</td>
+        <td>${{ '%.2f' | format(b.total_charge) }}</td>
+        <td>${{ '%.0f' | format(b.deposit) }}</td>
+        <td>{{ status_tag(b.status) }}</td>
+        <td class="row-actions">
+            {% if b.status in ('requested', 'accepted') %}
+            <form method="post" action="{{ url_for('update_booking', booking_id=b.id, action='cancel') }}"><button class="btn btn-small">cancel</button></form>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="muted">You haven't rented anything yet. <a href="{{ url_for('browse') }}">Browse tools</a></p>
+{% endif %}
+
+<div class="bar">your listings</div>
+{% if listings %}
+<ul class="results listing-rows">
+    {% for t in listings %}
+    <li class="result">
+        <a class="thumb" href="{{ url_for('tool_detail', tool_id=t.id) }}">
+            {% if t.photo_path %}
+            <img src="{{ url_for('uploaded_file', filename=t.photo_path) }}" alt="" loading="lazy">
+            {% else %}
+            <img class="placeholder" src="{{ url_for('static', filename='img/tool.svg') }}" alt="">
+            {% endif %}
+        </a>
+        <div>
+            <a class="result-title" href="{{ url_for('tool_detail', tool_id=t.id) }}">{{ t.name }}</a>
+            <div class="result-meta">{{ t.category | lower }}{{ ' · ' ~ t.battery_platform if t.battery_platform }}</div>
+        </div>
+        <div class="result-price">${{ '%.0f' | format(t.daily_price) }}<span class="muted">/day</span></div>
+        <form method="post" action="{{ url_for('unlist_tool', tool_id=t.id) }}"><button class="btn btn-small">remove</button></form>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="muted">Nothing posted yet. <a href="{{ url_for('list_tools') }}">Walk your garage</a> to create listings.</p>
+{% endif %}
+{% endblock %}

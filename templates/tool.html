@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}{{ tool.name }}{% endblock %}
+{% block crumb %}<span class="sep">&gt;</span><span>{{ tool.category | lower }}</span>{% endblock %}
+{% block content %}
+<a class="back" href="{{ url_for('browse') }}">&laquo; back to search</a>
+
+<h1 class="posting-title">
+    {{ tool.name }} - <span class="price">${{ '%.0f' | format(tool.daily_price) }}/day</span>
+    <span class="hood">({{ tool.neighborhood | lower }})</span>
+</h1>
+
+<div class="posting">
+    <div>
+        <div class="posting-media">
+            {% if tool.photo_path %}
+            <img src="{{ url_for('uploaded_file', filename=tool.photo_path) }}" alt="{{ tool.name }}">
+            {% else %}
+            <div class="thumb"><img class="placeholder" src="{{ url_for('static', filename='img/tool.svg') }}" alt=""></div>
+            {% endif %}
+        </div>
+
+        <div class="posting-body">{{ tool.description }}</div>
+
+        {% if tool.safety_notes %}
+        <p class="small"><b>safety note from owner:</b> {{ tool.safety_notes }}</p>
+        {% endif %}
+
+        {% if addons %}
+        <div class="note">
+            <b>battery add-ons from this owner:</b>
+            {% for a in addons %}
+            <a href="{{ url_for('tool_detail', tool_id=a.id) }}">{{ a.name }}</a> (${{ '%.0f' | format(a.daily_price) }}/day){{ ', ' if not loop.last }}
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if booked %}
+        <div class="note">
+            <b>already booked:</b>
+            {% for b in booked %}{{ b.start_date }} to {{ b.end_date }}{{ ', ' if not loop.last }}{% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
+    <aside>
+        <div class="attrgroup">
+            {% if tool.brand %}<div>make: <b>{{ tool.brand }}</b></div>{% endif %}
+            {% if tool.model %}<div>model: <b>{{ tool.model }}</b></div>{% endif %}
+            <div>power: <b>{{ tool.power_source | lower }}</b></div>
+            {% if tool.battery_platform %}
+            <div>battery: <b>{{ tool.battery_platform }}</b>
+                {% if fits_my_batteries %}<span class="tag tag-green">fits yours</span>{% endif %}</div>
+            {% endif %}
+            <div>includes: <b>{{ tool.included_items or '—' }}</b></div>
+        </div>
+        <div class="attrgroup">
+            <div>rate: <b>${{ '%.0f' | format(tool.daily_price) }}/day</b> (25% off 7+ days)</div>
+            <div>deposit: <b>${{ '%.0f' | format(tool.deposit) }}</b> card hold, released on return</div>
+            <div>owner: <b>{{ tool.owner_name }}</b></div>
+            <div>distance: <b>{{ miles }} mi</b></div>
+        </div>
+
+        {% if tool.owner_id == current_user.id %}
+        <div class="note">This is your listing. Switch users (top right) to test renting it.</div>
+        {% else %}
+        <form class="reply-box" method="post" action="{{ url_for('book_tool', tool_id=tool.id) }}" id="bookForm" data-tool-id="{{ tool.id }}">
+            <h2>request to rent</h2>
+            <div class="row">
+                <label>pick up<input type="date" name="start" min="{{ today }}" value="{{ today }}" required></label>
+                <label>return<input type="date" name="end" min="{{ today }}" value="{{ today }}" required></label>
+            </div>
+            <label class="inline">
+                <input type="checkbox" name="delivery" value="1" {{ 'disabled' if miles > delivery_max }}>
+                <span>deliver it to me{{ ' (only within %d mi)' % delivery_max if miles > delivery_max }}</span>
+            </label>
+            <label>delivery / pickup time
+                <select name="hour">
+                    {% for h in range(6, 23) %}
+                    <option value="{{ h }}" {{ 'selected' if h == 10 }}>{{ (h - 1) % 12 + 1 }}:00 {{ 'am' if h < 12 else 'pm' }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>message to owner (optional)
+                <textarea name="message" rows="2" placeholder="what's the project?"></textarea>
+            </label>
+
+            {% if tool.risk_tier == 'waiver' %}
+            <label class="inline waiver">
+                <input type="checkbox" name="waiver" required>
+                <span>I've used this kind of tool before, I accept responsibility for using it safely, and I've read the owner's safety note.</span>
+            </label>
+            {% endif %}
+
+            <div class="quote" id="quote">pick dates to see the price.</div>
+            <button type="submit" class="btn btn-primary btn-wide">send request</button>
+            <p class="muted small">You're only charged if the owner accepts.</p>
+        </form>
+        {% endif %}
+    </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/tool.js') }}"></script>
+{% endblock %}

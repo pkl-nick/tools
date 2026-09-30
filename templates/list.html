@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}post your tools{% endblock %}
+{% block crumb %}<span class="sep">&gt;</span><span>post</span>{% endblock %}
+{% block content %}
+<h1>post your tools</h1>
+<p>Walk your garage and snap your tools. We identify each one, read the brand and model where we can, and draft a price and deposit. You review everything before it posts.</p>
+
+<div class="upload-options">
+    <label class="upload-card">
+        <input type="file" id="photoInput" accept="image/*" multiple hidden>
+        <strong>&raquo; upload photos</strong>
+        <span class="muted small">One tool per photo works best. Shelves with several tools are OK.</span>
+    </label>
+    <label class="upload-card">
+        <input type="file" id="videoInput" accept="video/*" hidden>
+        <strong>&raquo; upload a walkthrough video</strong>
+        <span class="muted small">Walk slowly and pause a second on each tool. We pull still frames and skip duplicates.</span>
+    </label>
+</div>
+
+<div class="progress-card" id="progressCard" hidden>
+    <div class="progress-head">
+        <b id="progressTitle">working...</b>
+        <span class="muted small" id="progressCount"></span>
+    </div>
+    <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+    <ul class="log" id="log"></ul>
+    <a class="btn btn-primary" id="reviewBtn" href="{{ url_for('review_drafts') }}" hidden>review drafts &raquo;</a>
+</div>
+
+<div class="bar">tips</div>
+<ul class="small">
+    <li>Good light and fill the frame.</li>
+    <li>Get the label in the shot if you can, so the model number reads correctly.</li>
+    <li>iPhone videos in HEVC (.mov) may not play in desktop Chrome. Upload from the phone itself or use Safari.</li>
+</ul>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/list.js') }}"></script>
+{% endblock %}

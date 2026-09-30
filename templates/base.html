@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}tools for rent{% endblock %} - toolshare</title>
+    <link rel="icon" href="{{ url_for('static', filename='img/tool.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="crumbs">
+            <a class="brand" href="{{ url_for('browse') }}">toolshare</a>
+            <span class="sep">&gt;</span>
+            <span>{{ current_user.neighborhood | lower }}</span>
+            <span class="sep">&gt;</span>
+            <a href="{{ url_for('browse') }}">tools for rent</a>
+            {% block crumb %}{% endblock %}
+        </div>
+        <nav class="toplinks">
+            <a class="post-link" href="{{ url_for('list_tools') }}">post your tools</a>
+            {% if draft_count %}
+            <a href="{{ url_for('review_drafts') }}">review drafts ({{ draft_count }})</a>
+            {% endif %}
+            <a href="{{ url_for('garage') }}">my garage</a>
+            <form class="user-switch" method="post" id="userSwitch">
+                <label for="userSelect">acting as</label>
+                <select id="userSelect">
+                    {% for u in all_users %}
+                    <option value="{{ url_for('switch_user', user_id=u.id) }}" {{ 'selected' if u.id == current_user.id }}>{{ u.name }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+        </nav>
+    </header>
+
+    {% if not ai_live %}
+    <div class="demo-banner">
+        demo mode: photo recognition returns sample drafts. set <code>ENDPOINT_URL</code> and <code>AZURE_OPENAI_API_KEY</code> to use the real model.
+    </div>
+    {% endif %}
+
+    <main class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        &copy; 2026 toolshare &middot; <a href="{{ url_for('browse') }}">tools for rent</a> &middot; <a href="{{ url_for('list_tools') }}">post</a> &middot; <a href="{{ url_for('garage') }}">my garage</a> &middot; safety &middot; terms
+    </footer>
+
+    <script>
+        document.getElementById('userSelect').addEventListener('change', function () {
+            const form = document.getElementById('userSwitch');
+            form.action = this.value;
+            form.submit();
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

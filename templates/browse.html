@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}tools for rent{% endblock %}
+{% block content %}
+<div class="search-layout">
+    <form class="sidebar" method="get">
+        <h3>search tools for rent</h3>
+        <label><input type="search" name="q" value="{{ q }}" placeholder="spring compressor, pressure washer..."></label>
+        <label>category
+            <select name="category">
+                <option value="">all categories</option>
+                {% for c in categories %}
+                <option value="{{ c }}" {{ 'selected' if c == category }}>{{ c | lower }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>battery system
+            <select name="platform">
+                <option value="">any</option>
+                {% if my_platforms %}
+                <option value="mine" {{ 'selected' if platform == 'mine' }}>fits my batteries</option>
+                {% endif %}
+                {% for p in platforms %}
+                <option value="{{ p }}" {{ 'selected' if p == platform }}>{{ p }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>distance
+            <select name="max_miles">
+                {% for m in [2, 5, 10, 25] %}
+                <option value="{{ m }}" {{ 'selected' if max_miles == m }}>within {{ m }} mi</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button type="submit" class="btn">search</button>
+        {% if my_platforms %}
+        <p class="muted small">your batteries: {{ my_platforms | join(', ') }}</p>
+        {% endif %}
+    </form>
+
+    <section>
+        <div class="bar">
+            <span>tools for rent near {{ current_user.neighborhood | lower }}</span>
+            <span class="muted small">{{ tools | length }} result{{ 's' if tools | length != 1 }} &middot; closest first</span>
+        </div>
+
+        {% if tools %}
+        <ul class="results">
+            {% for t in tools %}
+            <li class="result">
+                <a class="thumb" href="{{ url_for('tool_detail', tool_id=t.id) }}">
+                    {% if t.photo_path %}
+                    <img src="{{ url_for('uploaded_file', filename=t.photo_path) }}" alt="" loading="lazy">
+                    {% else %}
+                    <img class="placeholder" src="{{ url_for('static', filename='img/tool.svg') }}" alt="">
+                    {% endif %}
+                </a>
+                <div>
+                    <a class="result-title" href="{{ url_for('tool_detail', tool_id=t.id) }}">{{ t.name }}</a>
+                    <div class="result-meta">
+                        {{ t.neighborhood | lower }} &middot; {{ t.miles }} mi &middot; {{ t.category | lower }}
+                        {% if t.battery_platform %}
+                        &middot; <span class="tag {{ 'tag-green' if t.battery_platform in my_platforms }}">{{ t.battery_platform }}{{ ' ✓' if t.battery_platform in my_platforms }}</span>
+                        {% endif %}
+                        {% if t.owner_id == current_user.id %}&middot; <span class="tag tag-blue">yours</span>{% endif %}
+                    </div>
+                </div>
+                <div class="result-price">${{ '%.0f' | format(t.daily_price) }}<span class="muted">/day</span></div>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty">
+            <p>No tools match those filters yet.</p>
+            <p><a href="{{ url_for('list_tools') }}">post your own tools</a></p>
+        </div>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

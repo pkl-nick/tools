@@ -1,2 +1,34 @@
-# tools
-tools.com website
+# toolshare
+
+A proof of concept for renting specialty tools from neighbors. Owners walk their garage with a phone, AI drafts the listings, and renters find tools nearby, including ones that fit batteries they already own.
+
+Same stack as the portfolio app: Flask, SQLite, Jinja templates and plain JS, with Azure OpenAI for vision. The styling is intentionally Craigslist-like with modern touches.
+
+## What works
+- **Snap-to-list:** upload photos or a walkthrough video. Video is split into frames in the browser, and duplicate frames and duplicate tools are merged. A vision model drafts the title, brand and model, category, battery system, price, deposit and safety tier for each tool.
+- **Bulk review:** edit, approve or skip every draft on one page. Chainsaws and similar tools are blocked during the pilot.
+- **Browse:** nearest first, with search, category, distance and a "fits my batteries" filter.
+- **Rental requests:** live quote with a weekly discount, 10% renter service fee, 15% owner commission, and a refundable deposit hold. Optional delivery is priced by distance and time of day (rush hour and late night cost more). Risky tools require a safety acknowledgment.
+- **My garage:** owners accept, decline or mark returned; renters cancel. Overlapping bookings are blocked.
+
+Left out of the POC: real accounts (an "acting as" switcher stands in), payments, messaging, ratings and maps.
+
+## Run locally
+```bash
+pip install -r requirements-dev.txt
+python app.py            # http://localhost:8000
+python -m pytest         # tests
+```
+With no Azure credentials set, photo recognition runs in **demo mode** and returns sample drafts. To use the real model, set `ENDPOINT_URL`, `DEPLOYMENT_NAME` and `AZURE_OPENAI_API_KEY` (see `.env.example`).
+
+The database is created and seeded automatically at `instance/tools.db`. Delete that file to reset.
+
+## Files
+| File | Purpose |
+|---|---|
+| `app.py` | Flask routes |
+| `listing_utils.py` | Vision prompt and function calling, draft normalization, pricing, distance |
+| `db_builder.py` | SQLite schema and demo seed data |
+| `templates/`, `static/` | Pages, CSS, and the browser-side photo/video handling (`static/js/list.js`) |
+| `docs/azure-setup.md` | Model choice (image vs video) and App Service setup |
+| `docs/research.md` | Market research behind the idea |

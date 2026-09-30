@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}review drafts{% endblock %}
+{% block crumb %}<span class="sep">&gt;</span><span>review drafts</span>{% endblock %}
+{% block content %}
+<h1>review your drafts</h1>
+<p class="muted">Check what the AI found, fix anything it got wrong, then post them all at once.</p>
+
+{% if drafts %}
+<form method="post" id="reviewForm">
+    <div class="bulk-bar">
+        <span class="muted">{{ drafts | length }} draft{{ 's' if drafts | length != 1 }}</span>
+        <button type="button" class="btn" data-set="approve">approve all</button>
+        <button type="button" class="btn" data-set="skip">skip all</button>
+        <button type="submit" class="btn btn-primary">save</button>
+    </div>
+
+    {% for d in drafts %}
+    <div class="draft {{ 'low-confidence' if d.ai_confidence is not none and d.ai_confidence < 0.5 }}">
+        <div class="draft-media">
+            {% if d.photo_path %}
+            <img src="{{ url_for('uploaded_file', filename=d.photo_path) }}" alt="">
+            {% endif %}
+            {% if d.ai_confidence is not none %}
+            <span class="tag {{ 'tag-warn' if d.ai_confidence < 0.5 else 'tag-green' }}">AI confidence {{ '%.0f' | format(d.ai_confidence * 100) }}%</span>
+            {% endif %}
+        </div>
+        <div class="draft-fields">
+            <div class="row">
+                <label class="grow">title<input name="name_{{ d.id }}" value="{{ d.name }}" required></label>
+            </div>
+            <div class="row">
+                <label>brand<input name="brand_{{ d.id }}" value="{{ d.brand }}"></label>
+                <label>model<input name="model_{{ d.id }}" value="{{ d.model }}"></label>
+            </div>
+            <div class="row">
+                <label>category
+                    <select name="category_{{ d.id }}">
+                        {% for c in categories %}<option {{ 'selected' if c == d.category }}>{{ c }}</option>{% endfor %}
+                    </select>
+                </label>
+                <label>power
+                    <select name="power_source_{{ d.id }}">
+                        {% for p in power_sources %}<option {{ 'selected' if p == d.power_source }}>{{ p }}</option>{% endfor %}
+                    </select>
+                </label>
+                <label>battery system
+                    <select name="battery_platform_{{ d.id }}">
+                        <option value="">none</option>
+                        {% for p in platforms %}<option {{ 'selected' if p == d.battery_platform }}>{{ p }}</option>{% endfor %}
+                    </select>
+                </label>
+            </div>
+            <label>description<textarea name="description_{{ d.id }}" rows="2">{{ d.description }}</textarea></label>
+            <div class="row">
+                <label class="grow">included<input name="included_items_{{ d.id }}" value="{{ d.included_items }}"></label>
+                <label>safety tier
+                    <select name="risk_tier_{{ d.id }}">
+                        {% for r in risk_tiers %}<option {{ 'selected' if r == d.risk_tier }}>{{ r }}</option>{% endfor %}
+                    </select>
+                </label>
+            </div>
+            <label>safety note for renters<input name="safety_notes_{{ d.id }}" value="{{ d.safety_notes }}"></label>
+            <div class="row">
+                <label>$/day<input type="number" step="1" min="1" name="daily_price_{{ d.id }}" value="{{ '%.0f' | format(d.daily_price) }}"></label>
+                <label>deposit $<input type="number" step="25" min="0" name="deposit_{{ d.id }}" value="{{ '%.0f' | format(d.deposit) }}"></label>
+                <label>new price $<input type="number" step="1" min="0" name="replacement_value_{{ d.id }}" value="{{ '%.0f' | format(d.replacement_value) }}"></label>
+            </div>
+            {% if d.risk_tier == 'excluded' %}
+            <p class="flash flash-error small">Chainsaws and similar tools can't be rented during the pilot. Approving will keep this off the marketplace.</p>
+            {% endif %}
+            <div class="actions">
+                <label class="inline"><input type="radio" name="action_{{ d.id }}" value="approve" checked> post it</label>
+                <label class="inline"><input type="radio" name="action_{{ d.id }}" value="skip"> skip</label>
+                <label class="inline"><input type="radio" name="action_{{ d.id }}" value="keep"> decide later</label>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+
+    <div class="bulk-bar">
+        <button type="submit" class="btn btn-primary">save</button>
+    </div>
+</form>
+{% else %}
+<div class="empty">
+    <p>No drafts waiting. Upload photos or a video to create some.</p>
+    <a href="{{ url_for('list_tools') }}">post your tools</a>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.querySelectorAll('[data-set]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll(`input[type=radio][value=${btn.dataset.set}]`).forEach((r) => { r.checked = true; });
+        });
+    });
+</script>
+{% endblock %}
