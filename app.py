@@ -273,7 +273,9 @@ def analyze_photo():
         return jsonify({'success': False, 'error': 'Photo is empty'}), 400
 
     try:
-        drafts, cost, demo_mode = listing_utils.analyze_photo(image_bytes, ALLOWED_IMAGE_TYPES[ext])
+        source = 'video' if request.form.get('source') == 'video' else 'photo'
+        drafts, cost, demo_mode, model_used = listing_utils.analyze_photo(
+            image_bytes, ALLOWED_IMAGE_TYPES[ext], source=source)
     except Exception as e:
         print(f"Error analyzing photo: {e}")
         return jsonify({'success': False, 'error': f'Could not analyze photo: {e}'}), 502
@@ -312,6 +314,7 @@ def analyze_photo():
         'duplicates_skipped': len(drafts) - len(created),
         'names': [d['name'] for d in created],
         'demo_mode': demo_mode,
+        'model': model_used,
         'cost': cost,
     })
 

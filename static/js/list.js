@@ -111,7 +111,7 @@
         return frames;
     }
 
-    async function analyzeAll(items, batchId) {
+    async function analyzeAll(items, batchId, source) {
         let created = 0;
         let dupes = 0;
         let demo = false;
@@ -120,6 +120,7 @@
             const body = new FormData();
             body.append('photo', items[i].blob, `upload-${i}.jpg`);
             body.append('batch_id', batchId);
+            body.append('source', source);   // video frames use the cheaper model
             try {
                 const res = await fetch('/api/analyze-photo', { method: 'POST', body });
                 const data = await res.json();
@@ -152,7 +153,7 @@
         setProgress(0, files.length, 'Preparing photos...');
         const items = [];
         for (const f of files) items.push({ blob: await imageFileToJpeg(f), label: f.name });
-        await analyzeAll(items, newBatchId());
+        await analyzeAll(items, newBatchId(), 'photo');
         e.target.value = '';
     });
 
@@ -166,7 +167,7 @@
             if (!frames.length) throw new Error('No usable frames found in that video.');
             addLog(`Pulled ${frames.length} distinct frames from the video.`, 'muted');
             // One batch id for the whole video, so the server merges the same tool seen in several frames
-            await analyzeAll(frames, newBatchId());
+            await analyzeAll(frames, newBatchId(), 'video');
         } catch (err) {
             setProgress(0, 0, 'Could not read that video');
             addLog(err.message, 'err');

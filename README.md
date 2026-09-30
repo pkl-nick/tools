@@ -2,7 +2,7 @@
 
 A proof of concept for renting specialty tools from neighbors. Owners walk their garage with a phone, AI drafts the listings, and renters find tools nearby, including ones that fit batteries they already own.
 
-Same stack as the portfolio app: Flask, SQLite, Jinja templates and plain JS, with Azure OpenAI for vision. The design is "Craigslist, evolved": text-first listings, blue link titles and the purple brand, with a modern layout (search in the header, category chips, list and gallery views, sticky booking card, dark mode, phone-first).
+Same stack as the portfolio app: Flask, SQLite, Jinja templates and plain JS, with Azure OpenAI GPT-5.6 (Luna, Terra, Sol) for vision via the v1 Responses API. The design is "Craigslist, evolved": text-first listings, blue link titles and the purple brand, with a modern layout (search in the header, category chips, list and gallery views, sticky booking card, dark mode, phone-first).
 
 ## What works
 - **Snap-to-list:** upload photos or a walkthrough video. Video is split into frames in the browser, and duplicate frames and duplicate tools are merged. A vision model drafts the title, brand and model, category, battery system, price, deposit and safety tier for each tool.
@@ -19,7 +19,7 @@ pip install -r requirements-dev.txt
 python app.py            # http://localhost:8000
 python -m pytest         # tests
 ```
-With no Azure credentials set, photo recognition runs in **demo mode** and returns sample drafts. To use the real model, set `ENDPOINT_URL`, `DEPLOYMENT_NAME` and `AZURE_OPENAI_API_KEY` (see `.env.example`).
+With no Azure credentials set, photo recognition runs in **demo mode** and returns sample drafts. To use the real models, set `ENDPOINT_URL` and `AZURE_OPENAI_API_KEY`, and create the three GPT-5.6 deployments (see `.env.example` and `docs/azure-setup.md`).
 
 The database is created and seeded automatically at `instance/tools.db`. Delete that file to reset.
 
@@ -27,8 +27,8 @@ The database is created and seeded automatically at `instance/tools.db`. Delete 
 | File | Purpose |
 |---|---|
 | `app.py` | Flask routes |
-| `listing_utils.py` | Vision prompt and function calling, draft normalization, pricing, distance |
+| `listing_utils.py` | Vision prompt, model tiering (Luna/Terra/Sol) and Structured Outputs, draft normalization, pricing, distance |
 | `db_builder.py` | SQLite schema and demo seed data |
 | `templates/`, `static/` | Pages, CSS, and the browser-side photo/video handling (`static/js/list.js`) |
-| `docs/azure-setup.md` | Model choice (image vs video) and App Service setup |
+| `docs/azure-setup.md` | GPT-5.6 deployments, v1 API, costs and App Service setup |
 | `docs/research.md` | Market research behind the idea |

@@ -169,8 +169,8 @@ def test_analyze_photo_rejects_bad_files(client):
 
 def test_excluded_tools_never_go_live(client, monkeypatch):
     act_as(client, DANA)
-    monkeypatch.setattr(listing_utils, 'analyze_photo', lambda b, m: (
-        [listing_utils.normalize_draft({'name': 'Gas Chainsaw', 'replacement_value': 300})], 0.0, True))
+    monkeypatch.setattr(listing_utils, 'analyze_photo', lambda b, m, source='photo': (
+        [listing_utils.normalize_draft({'name': 'Gas Chainsaw', 'replacement_value': 300})], 0.0, True, 'demo'))
     client.post('/api/analyze-photo', data={'photo': (fake_jpeg(), 'saw.jpg')}, content_type='multipart/form-data')
     tool_id = find_tool_id(client, 'Gas Chainsaw')
     client.post('/list/review', data={f'action_{tool_id}': 'approve', f'name_{tool_id}': 'Gas Chainsaw',
@@ -242,29 +242,79 @@ def test_cannot_book_own_tool_or_past_dates(client):
         assert app_module.get_db().execute('SELECT COUNT(*) FROM bookings').fetchone()[0] == 0
 
 
-def test_vision_call_parses_function_arguments(monkeypatch):
-    """Exercise the real-model path with a fake Azure client"""
+def fake_responses_client(tools_by_model, calls):
+    """Fake OpenAI client whose responses.create returns canned structured output per deployment"""
     import json
     from types import SimpleNamespace as NS
-    captured = {}
 
     def create(**kwargs):
-        captured.update(kwargs)
-        args = json.dumps({'tools': [{
-            'name': 'Impact Wrench', 'brand': 'Milwaukee', 'model': '2767-20', 'category': 'Power Tools',
+        calls.append(kwargs)
+        return NS(status='completed', output_text=json.dumps({'tools': tools_by_model[kwargs['model']]}),
+                  usage=NS(input_tokens=1500, output_tokens=500))
+    return NS(responses=NS(create=create))
+
+
+def tool_json(name, confidence):
+    return {'name': name, 'brand': 'Milwaukee', 'model': '2767-20', 'category': 'Power Tools',
             'power_source': 'Battery', 'battery_platform': 'Milwaukee M18', 'description': 'd',
             'included_items': 'Bare tool', 'replacement_value': 400, 'daily_price': 20, 'deposit': 200,
-            'risk_tier': 'standard', 'safety_notes': 's', 'confidence': 0.9}]})
-        msg = NS(tool_calls=[NS(function=NS(arguments=args))])
-        return NS(choices=[NS(message=msg)], usage=NS(prompt_tokens=1500, completion_tokens=500))
+            'risk_tier': 'standard', 'safety_notes': 's', 'confidence': confidence}
 
-    fake = NS(chat=NS(completions=NS(create=create)))
-    monkeypatch.setattr(listing_utils, 'get_client', lambda: fake)
-    drafts, cost = listing_utils.vision_listing_call(b'\xff\xd8img', 'image/jpeg')
 
+@pytest.fixture
+def live_ai(monkeypatch):
+    """Pretend Azure is configured, with default GPT-5.6 deployment names"""
+    monkeypatch.delenv('LISTING_AI_MODE', raising=False)
+    monkeypatch.setattr(listing_utils, 'endpoint', 'https://res.openai.azure.com/')
+    monkeypatch.setattr(listing_utils, 'subscription_key', 'k')
+
+
+def test_v1_base_url():
+    assert listing_utils.v1_base_url('https://res.openai.azure.com/') == 'https://res.openai.azure.com/openai/v1/'
+    assert listing_utils.v1_base_url('https://res.openai.azure.com/openai/v1') == 'https://res.openai.azure.com/openai/v1/'
+
+
+def test_responses_request_shape_and_parsing(live_ai, monkeypatch):
+    calls = []
+    monkeypatch.setattr(listing_utils, 'get_client',
+                        lambda: fake_responses_client({'gpt-5.6-terra': [tool_json('Impact Wrench', 0.9)]}, calls))
+    drafts, cost, demo, used = listing_utils.analyze_photo(b'\xff\xd8img', 'image/jpeg', source='photo')
+
+    assert not demo and used == 'gpt-5.6-terra'
     assert drafts[0]['battery_platform'] == 'Milwaukee M18'
-    assert drafts[0]['daily_price'] == 20
-    assert round(cost, 4) == 0.007
-    image_part = captured['messages'][1]['content'][1]
-    assert image_part['image_url']['url'].startswith('data:image/jpeg;base64,')
-    assert captured['tool_choice']['function']['name'] == 'record_tool_listings'
+    assert cost == pytest.approx(0.01125)   # 1500 in @ $2.50/M + 500 out @ $15/M
+    req = calls[0]
+    assert req['text']['format']['strict'] is True
+    assert req['reasoning'] == {'effort': 'low'}
+    assert 'temperature' not in req and 'max_tokens' not in req   # rejected by GPT-5.6
+    image = req['input'][0]['content'][1]
+    assert image['type'] == 'input_image' and image['image_url'].startswith('data:image/jpeg;base64,')
+
+
+def test_video_frames_use_luna(live_ai, monkeypatch):
+    calls = []
+    monkeypatch.setattr(listing_utils, 'get_client',
+                        lambda: fake_responses_client({'gpt-5.6-luna': [tool_json('Drill', 0.95)]}, calls))
+    _, _, _, used = listing_utils.analyze_photo(b'img', source='video')
+    assert used == 'gpt-5.6-luna' and len(calls) == 1
+
+
+def test_low_confidence_escalates_to_sol(live_ai, monkeypatch):
+    calls = []
+    monkeypatch.setattr(listing_utils, 'get_client', lambda: fake_responses_client({
+        'gpt-5.6-luna': [tool_json('Blurry thing', 0.3)],
+        'gpt-5.6-sol': [tool_json('Engine hoist', 0.85)],
+    }, calls))
+    drafts, _, _, used = listing_utils.analyze_photo(b'img', source='video')
+    assert used == 'gpt-5.6-luna > gpt-5.6-sol'
+    assert drafts[0]['name'] == 'Engine hoist'
+    assert calls[1]['reasoning'] == {'effort': 'medium'}
+
+
+def test_escalation_can_be_disabled(live_ai, monkeypatch):
+    calls = []
+    monkeypatch.setattr(listing_utils, 'DEPLOYMENT_SOL', '')
+    monkeypatch.setattr(listing_utils, 'get_client',
+                        lambda: fake_responses_client({'gpt-5.6-terra': [tool_json('Blurry', 0.2)]}, calls))
+    drafts, _, _, used = listing_utils.analyze_photo(b'img')
+    assert used == 'gpt-5.6-terra' and len(calls) == 1 and drafts[0]['name'] == 'Blurry'

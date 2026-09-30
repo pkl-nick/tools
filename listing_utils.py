@@ -4,6 +4,12 @@ Listing Utils - snap-to-list AI, pricing and distance helpers.
 analyze_photo() sends a garage photo to a vision model and gets back draft
 listings for every tool it can see. With no API credentials configured it runs
 in demo mode and returns sample drafts, so the whole flow works offline.
+
+Models: the GPT-5.6 family on Azure OpenAI, called through the v1 API
+(no api-version) and the Responses API with Structured Outputs.
+    Luna  - video frames: high volume, cheapest
+    Terra - photos: the default
+    Sol   - second opinion when a draft comes back low-confidence
 """
 
 import os
@@ -16,16 +22,32 @@ import hashlib
 from datetime import date
 from typing import List, Dict, Tuple, Optional
 
-# Same env var names as the portfolio app, so an existing Azure OpenAI deployment carries over.
-# The deployment must be a vision-capable model (gpt-4.1 and gpt-4o both are).
+# Azure OpenAI resource endpoint, e.g. https://<resource>.openai.azure.com/
 endpoint = os.getenv("ENDPOINT_URL", "")
-deployment = os.getenv("DEPLOYMENT_NAME", "gpt-4.1")
 subscription_key = os.getenv("AZURE_OPENAI_API_KEY", "")
 
-# USD per 1K tokens [input, output]
-COST_DICT = {
-    "gpt-4.1": [0.002, 0.008],
-    "gpt-4o": [0.0025, 0.01],
+# Deployment names as created in the Azure OpenAI portal
+DEPLOYMENT_LUNA = os.getenv("DEPLOYMENT_LUNA", "gpt-5.6-luna")
+DEPLOYMENT_TERRA = os.getenv("DEPLOYMENT_TERRA", "gpt-5.6-terra")
+DEPLOYMENT_SOL = os.getenv("DEPLOYMENT_SOL", "gpt-5.6-sol")   # set to "" to turn off escalation
+
+# Re-run an image on Sol when any draft's confidence is below this
+ESCALATE_BELOW = float(os.getenv("ESCALATE_BELOW", "0.6"))
+
+# Reasoning effort per tier: none | low | medium | high | xhigh | max
+REASONING_EFFORT = {
+    'luna': os.getenv("LUNA_EFFORT", "low"),
+    'terra': os.getenv("TERRA_EFFORT", "low"),
+    'sol': os.getenv("SOL_EFFORT", "medium"),
+}
+
+# USD per 1M tokens [input, output], Global Standard list prices at launch.
+# Azure prices have been changing; check the Azure OpenAI pricing page and update.
+# Reported usage on GPT-5.6 includes reasoning tokens, so treat cost as an estimate.
+COST_PER_M = {
+    'luna': [1.00, 6.00],
+    'terra': [2.50, 15.00],
+    'sol': [5.00, 30.00],
 }
 
 CATEGORIES = [
@@ -87,89 +109,119 @@ def ai_is_configured() -> bool:
     return bool(endpoint and subscription_key)
 
 
+def v1_base_url(resource_endpoint: str) -> str:
+    """Turn a resource endpoint into the v1 API base URL (accepts either form)"""
+    base = resource_endpoint.strip().rstrip('/')
+    if not base.endswith('/openai/v1'):
+        base += '/openai/v1'
+    return base + '/'
+
+
 _client = None
 
 
 def get_client():
-    """Lazily build the Azure OpenAI client so demo mode never needs the SDK configured"""
+    """
+    OpenAI client pointed at the Azure v1 API. No api-version to maintain;
+    new features arrive without code changes. Built lazily so demo mode never needs it.
+    """
     global _client
     if _client is None:
-        from openai import AzureOpenAI
-        _client = AzureOpenAI(
-            azure_endpoint=endpoint,
-            api_key=subscription_key,
-            api_version="2025-01-01-preview",
-        )
+        from openai import OpenAI
+        _client = OpenAI(api_key=subscription_key, base_url=v1_base_url(endpoint))
     return _client
+
+
+def deployment_for(tier: str) -> str:
+    return {'luna': DEPLOYMENT_LUNA, 'terra': DEPLOYMENT_TERRA, 'sol': DEPLOYMENT_SOL}[tier]
 
 
 # ---------------------------------------------------------------------------
 # Snap-to-list
 # ---------------------------------------------------------------------------
 
-def analyze_photo(image_bytes: bytes, mime_type: str = 'image/jpeg') -> Tuple[List[Dict], float, bool]:
+def analyze_photo(image_bytes: bytes, mime_type: str = 'image/jpeg',
+                  source: str = 'photo') -> Tuple[List[Dict], float, bool, str]:
     """
     Identify every rentable tool in a garage photo and draft a listing for each.
 
+    source: 'video' frames go to Luna (cheap, high volume); photos go to Terra.
+    If any draft is low-confidence, the image is re-run on Sol and Sol's answer is used.
+
     Returns:
         - List of normalized draft dicts (see normalize_draft)
-        - Cost of the API call (0 in demo mode)
+        - Total cost of the API calls (0 in demo mode)
         - Whether the result came from demo mode
+        - Deployment name(s) used, e.g. "gpt-5.6-terra" or "gpt-5.6-luna > gpt-5.6-sol"
     """
     if not ai_is_configured():
-        return mock_analyze_photo(image_bytes), 0.0, True
+        return mock_analyze_photo(image_bytes), 0.0, True, 'demo'
 
-    drafts, cost = vision_listing_call(image_bytes, mime_type)
-    return drafts, cost, False
+    tier = 'luna' if source == 'video' else 'terra'
+    drafts, cost = vision_listing_call(image_bytes, mime_type, tier)
+    used = deployment_for(tier)
+
+    low_confidence = any(d['ai_confidence'] is not None and d['ai_confidence'] < ESCALATE_BELOW for d in drafts)
+    if DEPLOYMENT_SOL and low_confidence:
+        try:
+            sol_drafts, sol_cost = vision_listing_call(image_bytes, mime_type, 'sol')
+            cost += sol_cost
+            used += f' > {DEPLOYMENT_SOL}'
+            if sol_drafts:
+                drafts = sol_drafts
+        except Exception as e:
+            # Keep the first answer if the second opinion fails
+            print(f"Sol escalation failed, keeping {tier} drafts: {e}")
+
+    return drafts, cost, False, used
 
 
-def vision_listing_call(image_bytes: bytes, mime_type: str) -> Tuple[List[Dict], float]:
-    """Call the vision model with a forced function call that returns draft listings"""
+TOOL_ITEM_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "name": {"type": "string", "description": "Short listing title, e.g. 'Gas Pressure Washer, 3100 PSI'"},
+        "brand": {"type": "string", "description": "Brand if visible or recognizable, else empty string"},
+        "model": {"type": "string", "description": "Model number if readable, else empty string"},
+        "category": {"type": "string", "enum": CATEGORIES},
+        "power_source": {"type": "string", "enum": POWER_SOURCES},
+        "battery_platform": {
+            "type": "string",
+            "enum": BATTERY_PLATFORMS + [''],
+            "description": "Battery system for cordless tools and batteries, empty string otherwise"
+        },
+        "description": {"type": "string", "description": "1-2 sentences a renter would find useful: what it does, capacity, condition"},
+        "included_items": {"type": "string", "description": "Accessories visible with it (hoses, blades, case, batteries), or 'Bare tool'"},
+        "replacement_value": {"type": "number", "description": "Estimated cost in USD to buy this tool new today"},
+        "daily_price": {"type": "number", "description": "Suggested daily rental price in USD"},
+        "deposit": {"type": "number", "description": "Suggested refundable deposit in USD"},
+        "risk_tier": {"type": "string", "enum": RISK_TIERS},
+        "safety_notes": {"type": "string", "description": "One short safety note for the renter"},
+        "confidence": {"type": "number", "description": "0-1 confidence in the identification"}
+    },
+    "required": ["name", "brand", "model", "category", "power_source", "battery_platform",
+                 "description", "included_items", "replacement_value", "daily_price",
+                 "deposit", "risk_tier", "safety_notes", "confidence"]
+}
 
-    function_schema = {
-        "name": "record_tool_listings",
-        "description": "Record one draft rental listing for each distinct tool visible in the photo",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "tools": {
-                    "type": "array",
-                    "maxItems": 12,
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "Short listing title, e.g. 'Gas Pressure Washer, 3100 PSI'"},
-                            "brand": {"type": "string", "description": "Brand if visible or recognizable, else empty string"},
-                            "model": {"type": "string", "description": "Model number if readable, else empty string"},
-                            "category": {"type": "string", "enum": CATEGORIES},
-                            "power_source": {"type": "string", "enum": POWER_SOURCES},
-                            "battery_platform": {
-                                "type": "string",
-                                "enum": BATTERY_PLATFORMS + [''],
-                                "description": "Battery system for cordless tools and batteries, empty string otherwise"
-                            },
-                            "description": {"type": "string", "description": "1-2 sentences a renter would find useful: what it does, capacity, condition"},
-                            "included_items": {"type": "string", "description": "Accessories visible with it (hoses, blades, case, batteries), or 'Bare tool'"},
-                            "replacement_value": {"type": "number", "description": "Estimated cost in USD to buy this tool new today"},
-                            "daily_price": {"type": "number", "description": "Suggested daily rental price in USD"},
-                            "deposit": {"type": "number", "description": "Suggested refundable deposit in USD"},
-                            "risk_tier": {"type": "string", "enum": RISK_TIERS},
-                            "safety_notes": {"type": "string", "description": "One short safety note for the renter"},
-                            "confidence": {"type": "number", "description": "0-1 confidence in the identification"}
-                        },
-                        "required": ["name", "brand", "model", "category", "power_source", "battery_platform",
-                                     "description", "included_items", "replacement_value", "daily_price",
-                                     "deposit", "risk_tier", "safety_notes", "confidence"]
-                    }
-                }
-            },
-            "required": ["tools"]
-        }
+# Structured Outputs (strict) guarantees the reply parses and matches this schema
+LISTINGS_FORMAT = {
+    "type": "json_schema",
+    "name": "tool_listings",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"tools": {"type": "array", "items": TOOL_ITEM_SCHEMA}},
+        "required": ["tools"]
     }
+}
 
-    system_prompt = """You help tool owners list their garage gear on a neighbor-to-neighbor tool rental marketplace.
+MAX_TOOLS_PER_IMAGE = 12
 
-You will see one photo of a garage, shelf, workbench or single tool. Create a draft listing for each distinct, rentable tool you can see.
+SYSTEM_PROMPT = """You help tool owners list their garage gear on a neighbor-to-neighbor tool rental marketplace.
+
+You will see one photo of a garage, shelf, workbench or single tool. Create a draft listing for each distinct, rentable tool you can see (at most 12).
 
 <listing_rules>
 - Only list tools and equipment someone would rent: power tools, air tools, automotive tools, yard equipment, masonry and concrete gear, ladders, specialty tools, and batteries/chargers.
@@ -194,40 +246,48 @@ You will see one photo of a garage, shelf, workbench or single tool. Create a dr
 
 If no rentable tool is visible, return an empty tools array."""
 
+
+def vision_listing_call(image_bytes: bytes, mime_type: str, tier: str = 'terra') -> Tuple[List[Dict], float]:
+    """One Responses API call on the given GPT-5.6 tier; returns normalized drafts and cost"""
+
     image_b64 = base64.b64encode(image_bytes).decode('ascii')
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": [
-            {"type": "text", "text": "Draft listings for the tools in this photo."},
-            {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_b64}", "detail": "high"}},
-        ]},
-    ]
+    request = dict(
+        model=deployment_for(tier),
+        instructions=SYSTEM_PROMPT,
+        input=[{
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "Draft listings for the tools in this photo."},
+                {"type": "input_image", "image_url": f"data:{mime_type};base64,{image_b64}", "detail": "high"},
+            ],
+        }],
+        text={"format": LISTINGS_FORMAT},
+        reasoning={"effort": REASONING_EFFORT[tier]},
+        # Reasoning tokens count toward this budget, so leave headroom above the JSON itself
+        max_output_tokens=16000,
+        store=False,
+    )
 
     for attempt in range(3):
         try:
-            response = get_client().chat.completions.create(
-                model=deployment,
-                messages=messages,
-                tools=[{"type": "function", "function": function_schema}],
-                tool_choice={"type": "function", "function": {"name": "record_tool_listings"}},
-                temperature=0.1,
-                max_tokens=3000
-            )
+            response = get_client().responses.create(**request)
 
-            rates = COST_DICT.get(deployment, COST_DICT["gpt-4.1"])
-            cost = (response.usage.prompt_tokens / 1000 * rates[0] +
-                    response.usage.completion_tokens / 1000 * rates[1])
+            rates = COST_PER_M[tier]
+            cost = (response.usage.input_tokens / 1e6 * rates[0] +
+                    response.usage.output_tokens / 1e6 * rates[1])
 
-            tool_call = response.choices[0].message.tool_calls[0]
-            result = json.loads(tool_call.function.arguments)
+            if getattr(response, 'status', 'completed') == 'incomplete':
+                raise ValueError(f"Response incomplete: {getattr(response, 'incomplete_details', None)}")
 
+            result = json.loads(response.output_text)
             if not isinstance(result.get('tools'), list):
                 raise ValueError("Response is missing the tools array")
 
-            return [normalize_draft(t) for t in result['tools'] if isinstance(t, dict)], cost
+            tools = [t for t in result['tools'] if isinstance(t, dict)][:MAX_TOOLS_PER_IMAGE]
+            return [normalize_draft(t) for t in tools], cost
 
         except Exception as e:
-            print(f"Vision listing API ERROR (attempt {attempt + 1}): {e}")
+            print(f"Vision listing API ERROR ({tier}, attempt {attempt + 1}): {e}")
             if attempt < 2:
                 time.sleep(random.randint(1, 3))
             else:
