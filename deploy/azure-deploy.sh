@@ -20,7 +20,8 @@ AOAI_NAME=""                              # Azure OpenAI resource name; blank = 
 REPO_URL="https://github.com/pkl-nick/tools.git"
 BRANCH="claude/tool-sharing-platform-research-xzdoea"
 RUNTIME="PYTHON:3.11"
-DEPLOYMENTS=(gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol)
+# Deployment names in your Azure OpenAI resource (override: LUNA=... TERRA=... SOL=... bash azure-deploy.sh)
+DEPLOYMENTS=("${LUNA:-gpt-5.6-luna}" "${TERRA:-gpt-5.6-terra}" "${SOL:-gpt-5.6-sol}")
 # ---------------------------------------------------------------------------
 
 step() { printf '\n==> %s\n' "$*"; }
@@ -32,9 +33,13 @@ az account show --query "{subscription:name, id:id}" -o table
 step "Finding the App Service plan used by $SOURCE_APP"
 PLAN_ID=$(az webapp show -g "$SOURCE_RG" -n "$SOURCE_APP" --query serverFarmId -o tsv)
 [ -n "$PLAN_ID" ] || fail "Could not find web app $SOURCE_APP in $SOURCE_RG"
-IFS=$'\t' read -r PLAN_NAME PLAN_RG PLAN_SKU PLAN_LINUX PLAN_LOCATION < <(az appservice plan show --ids "$PLAN_ID" \
+# A flat JMESPath list comes back from -o tsv one value per line
+mapfile -t PLAN < <(az appservice plan show --ids "$PLAN_ID" \
   --query "[name, resourceGroup, sku.name, reserved, location]" -o tsv)
+PLAN_NAME=${PLAN[0]:-} PLAN_RG=${PLAN[1]:-} PLAN_SKU=${PLAN[2]:-} PLAN_LOCATION=${PLAN[4]:-}
+PLAN_LINUX=$(tr '[:upper:]' '[:lower:]' <<< "${PLAN[3]:-}")
 echo "plan: $PLAN_NAME  rg: $PLAN_RG  sku: $PLAN_SKU  linux: $PLAN_LINUX  region: $PLAN_LOCATION"
+[ -n "$PLAN_RG" ] || fail "Could not read details for plan $PLAN_ID"
 [ "$PLAN_LINUX" = "true" ] || fail "Plan $PLAN_NAME is not a Linux plan; Python apps need Linux"
 ALWAYS_ON=true
 case "$PLAN_SKU" in
