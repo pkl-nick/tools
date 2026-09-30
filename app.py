@@ -1,10 +1,14 @@
 from flask import (Flask, render_template, request, jsonify, session, redirect, url_for,
                    flash, g, send_from_directory, abort)
 import os
+import hmac
+import json
 import uuid
 from datetime import date, datetime
 import db_builder
 import listing_utils
+from evals import runner as eval_runner
+from evals.scoring import summarize as summarize_eval
 
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -54,6 +58,13 @@ def get_current_user():
 
 def user_platforms(user):
     return [p for p in user['battery_platforms'].split(',') if p]
+
+
+@app.template_filter('money')
+def money_filter(amount):
+    """$4 for whole dollars, $4.50 otherwise"""
+    amount = float(amount or 0)
+    return f'${amount:.0f}' if amount == int(amount) else f'${amount:.2f}'
 
 
 @app.context_processor
@@ -341,7 +352,7 @@ def review_drafts():
                     'description', 'included_items', 'daily_price', 'deposit', 'replacement_value',
                     'risk_tier', 'safety_notes')}
                 fields['confidence'] = draft['ai_confidence']
-                clean = listing_utils.normalize_draft(fields)
+                clean = listing_utils.normalize_draft(fields, owner_priced=True)
                 status = 'listed'
                 if clean['risk_tier'] == 'excluded':
                     status = 'skipped'
@@ -444,6 +455,72 @@ def unlist_tool(tool_id):
         abort(404)
     flash('Listing removed.', 'success')
     return redirect(url_for('garage'))
+
+
+# ---------------------------------------------------------------------------
+# Evaluation: run the test photos through the models and score the drafts
+# ---------------------------------------------------------------------------
+
+def eval_allowed(key):
+    """Demo mode costs nothing, so it's open. With real models, require the EVAL_KEY app setting."""
+    if not listing_utils.ai_is_configured():
+        return True
+    expected = os.getenv('EVAL_KEY', '')
+    return bool(expected) and hmac.compare_digest(key or '', expected)
+
+
+@app.route('/eval')
+def eval_page():
+    key = request.args.get('key', '')
+    runs = get_db().execute(
+        """SELECT run_id, tier, COUNT(*) AS cases, ROUND(AVG(score), 1) AS avg_score, SUM(passed) AS passed,
+                  SUM(error IS NOT NULL) AS errors, ROUND(SUM(cost), 4) AS cost, ROUND(AVG(seconds), 1) AS seconds,
+                  MIN(created_at) AS started
+           FROM eval_results GROUP BY run_id, tier ORDER BY started DESC LIMIT 30"""
+    ).fetchall()
+    return render_template('eval.html', cases=eval_runner.load_cases(), tiers=eval_runner.TIERS,
+                           allowed=eval_allowed(key), key=key, runs=runs,
+                           needs_key=listing_utils.ai_is_configured() and not os.getenv('EVAL_KEY'),
+                           photo_tier=listing_utils.PHOTO_TIER, video_tier=listing_utils.VIDEO_TIER)
+
+
+@app.route('/api/eval/run', methods=['POST'])
+def eval_run():
+    data = request.get_json(silent=True) or {}
+    if not eval_allowed(data.get('key', '')):
+        return jsonify({'success': False, 'error': 'Missing or wrong eval key'}), 403
+    case = eval_runner.get_case(data.get('case_id', ''))
+    tier = data.get('tier', '')
+    if case is None or tier not in eval_runner.TIERS:
+        return jsonify({'success': False, 'error': 'Unknown case or tier'}), 400
+    run_id = (data.get('run_id') or uuid.uuid4().hex)[:40]
+
+    result = eval_runner.run_case(case, tier)
+    get_db().execute(
+        """INSERT INTO eval_results (run_id, case_id, tier, model, score, passed, seconds, cost, error, result_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (run_id, case['id'], tier, result.get('model'), result.get('score'), int(bool(result.get('passed'))),
+         result.get('seconds'), result.get('cost', 0), result.get('error'), json.dumps(result),
+         datetime.now().isoformat(timespec='seconds'))
+    )
+    get_db().commit()
+    return jsonify({'success': True, 'run_id': run_id, 'result': result})
+
+
+@app.route('/api/eval/runs/<run_id>')
+def eval_run_detail(run_id):
+    if not eval_allowed(request.args.get('key', '')):
+        return jsonify({'success': False, 'error': 'Missing or wrong eval key'}), 403
+    rows = get_db().execute('SELECT result_json FROM eval_results WHERE run_id = ? ORDER BY id', (run_id,)).fetchall()
+    results = [json.loads(r['result_json']) for r in rows]
+    return jsonify({'success': True, 'results': results,
+                    'summary': {t: summarize_eval([r for r in results if r['tier'] == t])
+                                for t in dict.fromkeys(r['tier'] for r in results)}})
+
+
+@app.route('/eval/images/<path:filename>')
+def eval_image(filename):
+    return send_from_directory(eval_runner.IMAGES_DIR, filename)
 
 
 @app.route('/switch-user/<int:user_id>', methods=['POST'])

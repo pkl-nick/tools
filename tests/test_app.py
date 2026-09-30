@@ -83,7 +83,7 @@ def test_normalize_draft_fixes_bad_values():
     assert d['category'] == 'Specialty'
     assert d['battery_platform'] == ''      # gas tool has no battery system
     assert d['risk_tier'] == 'excluded'
-    assert d['daily_price'] == 40           # 10% of replacement value
+    assert d['daily_price'] == 4            # ~1% of replacement value
     assert d['deposit'] == 300
     assert d['ai_confidence'] == 1.0
 
@@ -329,3 +329,110 @@ def test_photos_on_sol_do_not_escalate_to_sol_again(live_ai, monkeypatch):
     assert used == 'gpt-5.6-sol' and len(calls) == 1
     assert calls[0]['reasoning'] == {'effort': 'medium'}
     assert cost == pytest.approx(1500 / 1e6 * 5 + 500 / 1e6 * 30)   # Sol pricing
+
+
+# --- cheap pricing --------------------------------------------------------
+
+def test_daily_price_is_about_one_percent():
+    assert listing_utils.suggest_daily_price(400) == 4
+    assert listing_utils.suggest_daily_price(180) == 2       # 1.80 -> nearest $0.50
+    assert listing_utils.suggest_daily_price(1000) == 7      # 0.7% above $500
+    assert listing_utils.suggest_daily_price(40) == 1        # $1 minimum
+
+
+def test_ai_price_too_high_is_replaced_but_owner_price_is_kept():
+    ai = listing_utils.normalize_draft({'name': 'Saw', 'replacement_value': 400, 'daily_price': 40})
+    assert ai['daily_price'] == 4
+    owner = listing_utils.normalize_draft({'name': 'Saw', 'replacement_value': 400, 'daily_price': 12}, owner_priced=True)
+    assert owner['daily_price'] == 12
+    assert listing_utils.normalize_draft({'name': 'x', 'daily_price': 0.2}, owner_priced=True)['daily_price'] == 1
+
+
+def test_money_filter(client):
+    f = app_module.app.jinja_env.filters['money']
+    assert f(4) == '$4' and f(4.5) == '$4.50' and f(None) == '$0'
+
+
+def test_seeded_prices_are_cheap(client):
+    assert b'$1.50' in client.get('/').data   # coil spring compressor
+
+
+# --- evaluation harness ---------------------------------------------------
+
+from evals import scoring, runner   # noqa: E402
+
+
+def eval_case(tools, max_listings=3):
+    return {'id': 'c', 'expect': {'tools': tools, 'max_listings': max_listings}}
+
+
+def test_scoring_matches_phrases_and_checks_attributes():
+    case = eval_case([
+        {'label': 'miter saw', 'match': ['miter saw', 'chop saw'], 'brand': 'DeWalt', 'category': ['Woodworking', 'Power Tools']},
+        {'label': 'drill', 'match': ['drill'], 'battery_platform': ['DeWalt 20V MAX']},
+    ])
+    drafts = [
+        {'name': '12" Sliding Chop Saw', 'brand': 'DeWalt', 'category': 'Woodworking'},
+        {'name': 'Cordless Drill', 'brand': 'DeWalt', 'battery_platform': 'Other'},
+    ]
+    r = scoring.score_case(case, drafts)
+    assert r['found'] == 2 and r['missing'] == []
+    assert [c['ok'] for c in r['checks']] == [True, True, False]   # brand, category ok; battery wrong
+    assert r['score'] == 60 + 20 + 10 and r['passed']
+
+
+def test_scoring_each_draft_matches_one_tool_and_penalizes_over_listing():
+    case = eval_case([{'label': 'drill', 'match': ['drill']}, {'label': 'drill 2', 'match': ['drill']}], max_listings=1)
+    r = scoring.score_case(case, [{'name': 'Drill'}, {'name': 'Sander'}])
+    assert r['found'] == 1 and r['missing'] == ['drill 2'] and r['over_listed'] == 1
+    assert r['score'] == 30 + 15 and not r['passed']
+
+
+def test_scoring_negative_case():
+    assert scoring.score_case(eval_case([], 0), [])['passed']
+    r = scoring.score_case(eval_case([], 0), [{'name': 'Lamp'}])
+    assert r['score'] == 75 and not r['passed']
+
+
+def test_eval_cases_are_valid_and_images_exist():
+    cases = runner.load_cases()
+    assert len(cases) >= 15 and len({c['id'] for c in cases}) == len(cases)
+    for c in cases:
+        assert os.path.exists(os.path.join(runner.IMAGES_DIR, c['file'])), c['file']
+        assert c['source']['license'] in ('by', 'by-sa', 'cc0', 'pdm')
+        for t in c['expect']['tools']:
+            assert t['match'] and t['label']
+            if 'category' in t:
+                assert set(t['category'] if isinstance(t['category'], list) else [t['category']]) <= set(listing_utils.CATEGORIES)
+            if 'battery_platform' in t:
+                assert set(t['battery_platform']) <= set(listing_utils.BATTERY_PLATFORMS)
+
+
+def test_eval_runner_with_fake_model(live_ai, monkeypatch):
+    calls = []
+    monkeypatch.setattr(listing_utils, 'get_client', lambda: fake_responses_client({
+        'gpt-5.6-sol': [dict(tool_json('Folding Engine Hoist', 0.9), category='Automotive', risk_tier='waiver'),
+                        dict(tool_json('Floor Jack', 0.9), category='Automotive', risk_tier='standard')],
+    }, calls))
+    r = runner.run_case(runner.get_case('garage-engine-hoist'), 'sol')
+    assert r['found'] == 2 and r['passed'] and r['model'] == 'gpt-5.6-sol'
+
+
+def test_eval_page_and_api_in_demo_mode(client):
+    assert b'model test bench' in client.get('/eval').data
+    res = client.post('/api/eval/run', json={'case_id': 'living-room-no-tools', 'tier': 'pipeline', 'run_id': 'r1'})
+    data = res.get_json()
+    assert data['success'] and data['result']['model'] == 'demo'
+    detail = client.get('/api/eval/runs/r1').get_json()
+    assert detail['results'][0]['case_id'] == 'living-room-no-tools'
+    assert b'pipeline' in client.get('/eval').data           # shows in previous runs
+    assert client.get('/eval/images/living-room-no-tools.jpg').status_code == 200
+
+
+def test_eval_api_requires_key_when_models_are_live(client, live_ai, monkeypatch):
+    monkeypatch.setenv('EVAL_KEY', 'sekrit')
+    body = {'case_id': 'living-room-no-tools', 'tier': 'luna'}
+    assert client.post('/api/eval/run', json=body).status_code == 403
+    assert client.post('/api/eval/run', json=dict(body, key='wrong')).status_code == 403
+    monkeypatch.delenv('EVAL_KEY')
+    assert client.post('/api/eval/run', json=dict(body, key='')).status_code == 403   # no key configured = closed

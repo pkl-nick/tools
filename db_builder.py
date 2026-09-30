@@ -71,6 +71,23 @@ CREATE TABLE IF NOT EXISTS bookings (
 
 CREATE INDEX IF NOT EXISTS idx_tools_status ON tools(status);
 CREATE INDEX IF NOT EXISTS idx_bookings_tool ON bookings(tool_id);
+
+-- Results from the /eval page, one row per case per model tier
+CREATE TABLE IF NOT EXISTS eval_results (
+    id INTEGER PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    case_id TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    model TEXT,
+    score INTEGER,
+    passed INTEGER,
+    seconds REAL,
+    cost REAL,
+    error TEXT,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_eval_run ON eval_results(run_id);
 """
 
 # (name, neighborhood, lat offset, lng offset, battery platforms)
@@ -86,60 +103,60 @@ DEMO_TOOLS = [
     (0, dict(name='60-Gallon Upright Air Compressor', brand='Campbell Hausfeld', model='DC060500',
              category='Air Tools & Compressors', power_source='Corded (240V)',
              description='Shop compressor, 3.7 HP. Runs framing nailers, impact guns and sprayers all day.',
-             included_items='25 ft hose, quick-connect coupler', daily_price=45, deposit=300,
+             included_items='25 ft hose, quick-connect coupler', daily_price=4.5, deposit=300,
              replacement_value=900, risk_tier='standard',
              safety_notes='Needs a 240V outlet. Drain tank after use.')),
     (0, dict(name='Framing Nailer', brand='Milwaukee', model='2744-20 M18 FUEL',
              category='Power Tools', power_source='Battery', battery_platform='Milwaukee M18',
              description='Cordless 21-degree framing nailer. Bare tool, bring your own M18 battery or add one.',
-             included_items='Bare tool only', daily_price=30, deposit=250, replacement_value=450,
+             included_items='Bare tool only', daily_price=3, deposit=250, replacement_value=450,
              risk_tier='waiver', safety_notes='Eye protection required. Never disable the contact trip.')),
     (0, dict(name='Wet Tile Saw, 10"', brand='DeWalt', model='D36000',
              category='Masonry & Concrete', power_source='Corded (120V)',
              description='Sliding table tile saw, cuts up to 24" tile.', included_items='Stand, blade, water tray',
-             daily_price=40, deposit=300, replacement_value=1000, risk_tier='waiver',
+             daily_price=4, deposit=300, replacement_value=1000, risk_tier='waiver',
              safety_notes='Blade guard must stay on. GFCI outlet only.')),
     (0, dict(name='M18 5.0Ah Battery (x2)', brand='Milwaukee', model='48-11-1850',
              category='Batteries & Chargers', power_source='Battery', battery_platform='Milwaukee M18',
              description='Two charged M18 XC5.0 packs. Add-on for bare M18 tools.', included_items='2 batteries',
-             daily_price=8, deposit=150, replacement_value=250, risk_tier='standard',
+             daily_price=1, deposit=150, replacement_value=250, risk_tier='standard',
              safety_notes='Do not use a pack that is swollen or cracked.')),
     (1, dict(name='Gas Pressure Washer, 3300 PSI', brand='Simpson', model='MegaShot MSH3125',
              category='Outdoor & Yard', power_source='Gas',
              description='Cleans driveways, decks and siding. Honda engine, starts first pull.',
-             included_items='25 ft hose, 5 nozzle tips, soap tip', daily_price=35, deposit=200,
+             included_items='25 ft hose, 5 nozzle tips, soap tip', daily_price=3.5, deposit=200,
              replacement_value=450, risk_tier='waiver',
              safety_notes='Never point at people or pets. 0-degree tip can cut skin.')),
     (1, dict(name='String Trimmer', brand='Ryobi', model='P20100 ONE+ HP',
              category='Outdoor & Yard', power_source='Battery', battery_platform='Ryobi ONE+',
              description='18V brushless trimmer. Bare tool, fits any Ryobi ONE+ battery.',
-             included_items='Bare tool, spare spool', daily_price=10, deposit=75, replacement_value=140,
+             included_items='Bare tool, spare spool', daily_price=1, deposit=75, replacement_value=140,
              risk_tier='standard', safety_notes='Wear eye protection.')),
     (1, dict(name='Drywall Panel Lift', brand='Pentagon Tool', model='Professional 11ft',
              category='Specialty', power_source='Manual',
              description='Holds 4x12 sheets on ceilings up to 11 ft. One person can hang ceilings.',
-             included_items='Extension, cradle', daily_price=25, deposit=150, replacement_value=260,
+             included_items='Extension, cradle', daily_price=2.5, deposit=150, replacement_value=260,
              risk_tier='standard', safety_notes='Lock the wheels before cranking up.')),
     (2, dict(name='Coil Spring Compressor Kit', brand='OTC', model='6494',
              category='Automotive', power_source='Manual',
              description='Strut spring compressor for MacPherson struts. Heavy duty, clamshell style.',
-             included_items='Compressor, jaws for 3 spring sizes', daily_price=15, deposit=120,
+             included_items='Compressor, jaws for 3 spring sizes', daily_price=1.5, deposit=120,
              replacement_value=250, risk_tier='waiver',
              safety_notes='Compressed springs store dangerous energy. Follow the included steps exactly.')),
     (2, dict(name='2-Ton Folding Engine Hoist', brand='Pittsburgh', model='69514',
              category='Automotive', power_source='Manual',
              description='Cherry picker for engine and transmission pulls. Folds for transport.',
-             included_items='Hoist, load leveler', daily_price=30, deposit=200, replacement_value=320,
+             included_items='Hoist, load leveler', daily_price=3, deposit=200, replacement_value=320,
              risk_tier='waiver', safety_notes='Never get under a suspended load.')),
     (2, dict(name='1/2" High-Torque Impact Wrench', brand='Milwaukee', model='2767-20 M18 FUEL',
              category='Power Tools', power_source='Battery', battery_platform='Milwaukee M18',
              description='1,400 ft-lb breakaway torque. Takes off seized lug nuts and axle nuts.',
-             included_items='Bare tool, impact socket set', daily_price=20, deposit=200,
+             included_items='Bare tool, impact socket set', daily_price=2, deposit=200,
              replacement_value=400, risk_tier='standard', safety_notes='Use impact-rated sockets only.')),
     (3, dict(name='Electric Concrete Mixer, 4 cu ft', brand='Kushlan', model='450DD',
              category='Masonry & Concrete', power_source='Corded (120V)',
              description='Direct-drive mixer, mixes two 80 lb bags at a time.', included_items='Mixer',
-             daily_price=35, deposit=200, replacement_value=600, risk_tier='standard',
+             daily_price=3.5, deposit=200, replacement_value=600, risk_tier='standard',
              safety_notes='Keep hands out of the drum while running.')),
 ]
 
@@ -159,12 +176,26 @@ def get_connection(db_path=None):
     return conn
 
 
+# Bump when a data migration is added; stored in SQLite's PRAGMA user_version
+SCHEMA_VERSION = 1
+
+
 def init_database(conn, seed=True):
-    """Create tables, and seed demo data if the database is empty"""
+    """Create tables, seed demo data if the database is empty, and run pending migrations"""
     conn.executescript(SCHEMA)
     if seed and conn.execute('SELECT COUNT(*) FROM users').fetchone()[0] == 0:
         seed_demo_data(conn)
+        conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')   # seed data is already current
+    migrate(conn)
     conn.commit()
+
+
+def migrate(conn):
+    version = conn.execute('PRAGMA user_version').fetchone()[0]
+    if version < 1:
+        # v1: daily prices cut ~90% (now ~1% of replacement value), nearest $0.50, $1 minimum
+        conn.execute('UPDATE tools SET daily_price = MAX(1.0, ROUND(daily_price * 0.1 * 2) / 2.0)')
+        conn.execute('PRAGMA user_version = 1')
 
 
 def seed_demo_data(conn):

@@ -87,7 +87,7 @@
             <a class="result-title" href="{{ url_for('tool_detail', tool_id=t.id) }}">{{ t.name }}</a>
             <div class="result-meta">{{ t.category | lower }}{{ ' · ' ~ t.battery_platform if t.battery_platform }}</div>
         </div>
-        <div class="result-price">${{ '%.0f' | format(t.daily_price) }}<span class="muted">/day</span></div>
+        <div class="result-price">{{ t.daily_price | money }}<span class="muted">/day</span></div>
         <form method="post" action="{{ url_for('unlist_tool', tool_id=t.id) }}"><button class="btn btn-small">remove</button></form>
     </li>
     {% endfor %}

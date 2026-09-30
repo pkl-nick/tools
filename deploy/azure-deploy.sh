@@ -85,9 +85,13 @@ SETTINGS=(
 if ! grep -qx "FLASK_SECRET_KEY" <<< "$EXISTING_SETTINGS"; then
   SETTINGS+=("FLASK_SECRET_KEY=$(openssl rand -hex 32)")
 fi
+# Key for the /eval test bench, so strangers can't run up model costs
+if ! grep -qx "EVAL_KEY" <<< "$EXISTING_SETTINGS"; then
+  SETTINGS+=("EVAL_KEY=$(openssl rand -hex 8)")
+fi
 az webapp config appsettings set -g "$PLAN_RG" -n "$APP_NAME" --settings "${SETTINGS[@]}" --output none
 unset AOAI_KEY SETTINGS
-echo "set: ENDPOINT_URL, AZURE_OPENAI_API_KEY, DEPLOYMENT_*, PHOTO_TIER=$PHOTO_TIER, VIDEO_TIER=$VIDEO_TIER, TOOLS_DB_PATH, UPLOAD_FOLDER, SCM_DO_BUILD_DURING_DEPLOYMENT, FLASK_SECRET_KEY"
+echo "set: ENDPOINT_URL, AZURE_OPENAI_API_KEY, DEPLOYMENT_*, PHOTO_TIER=$PHOTO_TIER, VIDEO_TIER=$VIDEO_TIER, TOOLS_DB_PATH, UPLOAD_FOLDER, SCM_DO_BUILD_DURING_DEPLOYMENT, FLASK_SECRET_KEY, EVAL_KEY"
 
 step "Runtime configuration"
 az webapp config set -g "$PLAN_RG" -n "$APP_NAME" --output none \
@@ -103,10 +107,12 @@ WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 git clone --quiet --depth 1 --branch "$BRANCH" "$REPO_URL" "$WORKDIR/src"
 echo "commit: $(git -C "$WORKDIR/src" log -1 --format='%h %s')"
-(cd "$WORKDIR/src" && zip -qr "$WORKDIR/app.zip" . -x '.git/*' 'tests/*' 'docs/*' 'deploy/*' 'instance/*')
+(cd "$WORKDIR/src" && zip -qr "$WORKDIR/app.zip" . -x '.git/*' 'tests/*' 'docs/*' 'deploy/*' 'instance/*' 'evals/results/*')
 az webapp deploy -g "$PLAN_RG" -n "$APP_NAME" --src-path "$WORKDIR/app.zip" --type zip --output none
 
 URL="https://$(az webapp show -g "$PLAN_RG" -n "$APP_NAME" --query defaultHostName -o tsv)"
 step "Done"
+EVAL_KEY_VALUE=$(az webapp config appsettings list -g "$PLAN_RG" -n "$APP_NAME" --query "[?name=='EVAL_KEY'].value | [0]" -o tsv)
 echo "App: $URL"
+echo "Test bench: $URL/eval?key=$EVAL_KEY_VALUE   (keep this link private; runs cost model credits)"
 echo "Logs: az webapp log tail -g $PLAN_RG -n $APP_NAME"

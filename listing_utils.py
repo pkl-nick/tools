@@ -241,7 +241,7 @@ You will see one photo of a garage, shelf, workbench or single tool. Create a dr
 
 <pricing_guidance>
 - replacement_value: typical new retail price in USD.
-- daily_price: roughly 8-12% of replacement value for tools under $500, 5-8% above $500, never below $5. Round to whole dollars.
+- daily_price: cheap on purpose, so renters can keep a tool for days or a week without pressure. About 1% of replacement value per day (0.7% above $500), never below $1. Round to the nearest $0.50. Example: a $400 impact wrench is $4/day.
 - deposit: roughly 50-100% of replacement value, rounded to the nearest $25.
 </pricing_guidance>
 
@@ -346,10 +346,22 @@ def mock_analyze_photo(image_bytes: bytes) -> List[Dict]:
     return [normalize_draft(dict(p)) for p in picks]
 
 
+# Daily rental is ~1% of what the tool costs new: cheap enough to keep it a week.
+# Owners earn passively; delivery and pickup are where the bigger fees are.
+DAILY_RATE = 0.01
+DAILY_RATE_OVER_500 = 0.007
+MIN_DAILY_PRICE = 1.00
+MAX_DAILY_RATE = 0.025        # AI suggestions above 2.5%/day of replacement value get replaced
+
+
+def round_half_dollar(amount: float) -> float:
+    return round(amount * 2) / 2
+
+
 def suggest_daily_price(replacement_value: float) -> float:
     """Daily price heuristic used when the model's number is missing or out of range"""
-    rate = 0.10 if replacement_value < 500 else 0.065
-    return float(max(5, round(replacement_value * rate)))
+    rate = DAILY_RATE if replacement_value < 500 else DAILY_RATE_OVER_500
+    return float(max(MIN_DAILY_PRICE, round_half_dollar(replacement_value * rate)))
 
 
 def suggest_deposit(replacement_value: float) -> float:
@@ -364,8 +376,12 @@ def _to_float(value, default=0.0) -> float:
         return default
 
 
-def normalize_draft(raw: Dict) -> Dict:
-    """Coerce a model or form draft into valid listing fields with sane prices"""
+def normalize_draft(raw: Dict, owner_priced: bool = False) -> Dict:
+    """
+    Coerce a model or form draft into valid listing fields with sane prices.
+    owner_priced: the owner typed the price on the review page, so keep it
+    (only enforce the minimum) instead of replacing out-of-range AI suggestions.
+    """
     name = str(raw.get('name', '')).strip()[:120] or 'Unidentified tool'
     category = raw.get('category') if raw.get('category') in CATEGORIES else 'Specialty'
     power_source = raw.get('power_source') if raw.get('power_source') in POWER_SOURCES else 'Manual'
@@ -375,8 +391,12 @@ def normalize_draft(raw: Dict) -> Dict:
 
     replacement = max(0.0, _to_float(raw.get('replacement_value')))
     daily = _to_float(raw.get('daily_price'))
-    if daily <= 0 or (replacement and daily > replacement * 0.25):
+    if owner_priced:
+        daily = max(MIN_DAILY_PRICE, daily) if daily > 0 else suggest_daily_price(replacement)
+    elif daily <= 0 or (replacement and daily > replacement * MAX_DAILY_RATE):
         daily = suggest_daily_price(replacement)
+    else:
+        daily = max(MIN_DAILY_PRICE, round_half_dollar(daily))
     deposit = _to_float(raw.get('deposit'))
     if deposit <= 0 or (replacement and deposit > replacement * 1.5):
         deposit = suggest_deposit(replacement)

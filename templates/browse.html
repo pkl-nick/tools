@@ -71,7 +71,7 @@
                 {% if t.owner_id == current_user.id %}<span class="tag tag-blue">yours</span>{% endif %}
             </div>
         </div>
-        <div class="result-price">${{ '%.0f' | format(t.daily_price) }}<span>/day</span></div>
+        <div class="result-price">{{ t.daily_price | money }}<span>/day</span></div>
     </li>
     {% endfor %}
 </ul>

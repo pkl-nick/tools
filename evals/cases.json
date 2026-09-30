@@ -1,0 +1,674 @@
+{
+  "about": "Snap-to-list evaluation set. Openly licensed photos (see ATTRIBUTION.md), lightly cropped. 'match' lists alternative phrases; a draft matches when every word of one phrase appears in its name, brand or model.",
+  "cases": [
+    {
+      "id": "garage-engine-hoist",
+      "file": "garage-engine-hoist.jpg",
+      "difficulty": "medium",
+      "notes": "Home garage mid-project: folding engine hoist, floor jack, jack stands, cars.",
+      "crop": [
+        0.03,
+        0.05,
+        0.97,
+        0.97
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "engine hoist",
+            "match": [
+              "hoist",
+              "cherry picker",
+              "engine crane",
+              "shop crane"
+            ],
+            "category": "Automotive",
+            "risk_tier": "waiver"
+          },
+          {
+            "label": "floor jack",
+            "match": [
+              "floor jack",
+              "trolley jack",
+              "jack"
+            ],
+            "category": "Automotive"
+          }
+        ],
+        "max_listings": 5
+      },
+      "source": {
+        "title": "Borrowed engine hoist.",
+        "creator": "Grant.C",
+        "creator_url": "https://www.flickr.com/photos/69663188@N00",
+        "license": "by",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/",
+        "landing_url": "https://www.flickr.com/photos/69663188@N00/14148178288",
+        "image_url": "https://live.staticflickr.com/3919/14148178288_ceb8cb1565_b.jpg"
+      }
+    },
+    {
+      "id": "milwaukee-m12-circular-saw",
+      "file": "milwaukee-m12-circular-saw.jpg",
+      "difficulty": "medium",
+      "notes": "Milwaukee FUEL circular saw; the base is stamped M12 (tests M12 vs M18). Drill partly in frame.",
+      "crop": [
+        0.0,
+        0.0,
+        0.92,
+        1.0
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "circular saw",
+            "match": [
+              "circular saw",
+              "circ saw"
+            ],
+            "category": "Power Tools",
+            "brand": "Milwaukee",
+            "battery_platform": [
+              "Milwaukee M12"
+            ],
+            "risk_tier": "waiver"
+          }
+        ],
+        "max_listings": 3
+      },
+      "source": {
+        "title": "Milwaukee Tool New Product Launch Event",
+        "creator": "Charles & Hudson",
+        "creator_url": "https://www.flickr.com/photos/34383603@N03",
+        "license": "by-sa",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/2.0/",
+        "landing_url": "https://www.flickr.com/photos/34383603@N03/14742463380",
+        "image_url": "https://live.staticflickr.com/3854/14742463380_bbcddb4670_b.jpg"
+      }
+    },
+    {
+      "id": "milwaukee-battery-charger",
+      "file": "milwaukee-battery-charger.jpg",
+      "difficulty": "easy",
+      "notes": "Milwaukee multi-bay charger with M12 packs on top and M18 packs below.",
+      "crop": [
+        0.12,
+        0.08,
+        0.9,
+        0.95
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "charger / batteries",
+            "match": [
+              "charger",
+              "batter"
+            ],
+            "category": "Batteries & Chargers",
+            "brand": "Milwaukee",
+            "battery_platform": [
+              "Milwaukee M18",
+              "Milwaukee M12"
+            ]
+          }
+        ],
+        "max_listings": 3
+      },
+      "source": {
+        "title": "Milwaukee Tool New Product Launch Event",
+        "creator": "Charles & Hudson",
+        "creator_url": "https://www.flickr.com/photos/34383603@N03",
+        "license": "by-sa",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/2.0/",
+        "landing_url": "https://www.flickr.com/photos/34383603@N03/14742607007",
+        "image_url": "https://live.staticflickr.com/3884/14742607007_63215cea08_b.jpg"
+      }
+    },
+    {
+      "id": "dewalt-flexvolt-compressor",
+      "file": "dewalt-flexvolt-compressor.jpg",
+      "difficulty": "easy",
+      "notes": "DeWalt FLEXVOLT cordless 2.5 gal compressor.",
+      "crop": [
+        0.35,
+        0.0,
+        1.0,
+        1.0
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "air compressor",
+            "match": [
+              "compressor"
+            ],
+            "category": "Air Tools & Compressors",
+            "brand": "DeWalt",
+            "battery_platform": [
+              "DeWalt FLEXVOLT",
+              "DeWalt 20V MAX"
+            ]
+          }
+        ],
+        "max_listings": 1
+      },
+      "source": {
+        "title": "DeWalt Air Compressor",
+        "creator": "QuietHut",
+        "creator_url": "https://www.flickr.com/photos/154900222@N05",
+        "license": "by",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/",
+        "landing_url": "https://www.flickr.com/photos/154900222@N05/28200277409",
+        "image_url": "https://live.staticflickr.com/4697/28200277409_9c79ceb33e_b.jpg"
+      }
+    },
+    {
+      "id": "makita-drill-bench",
+      "file": "makita-drill-bench.jpg",
+      "difficulty": "easy",
+      "notes": "Makita cordless drill on a bench with a clamp, mallet and chisel (hand tools should be skipped).",
+      "crop": [
+        0.05,
+        0.05,
+        1.0,
+        1.0
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "cordless drill",
+            "match": [
+              "drill",
+              "driver"
+            ],
+            "category": "Power Tools",
+            "brand": "Makita",
+            "battery_platform": [
+              "Makita 18V LXT",
+              "Other"
+            ]
+          }
+        ],
+        "max_listings": 2
+      },
+      "source": {
+        "title": "Somewhere to clamp my wood",
+        "creator": "Phil and Pam",
+        "creator_url": "https://www.flickr.com/photos/33987777@N00",
+        "license": "by",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/",
+        "landing_url": "https://www.flickr.com/photos/33987777@N00/2159439835",
+        "image_url": "https://live.staticflickr.com/2094/2159439835_3359328bda_b.jpg"
+      }
+    },
+    {
+      "id": "five-drills-mixed-brands",
+      "file": "five-drills-mixed-brands.jpg",
+      "difficulty": "hard",
+      "notes": "Five small cordless drills from different brands on a mat.",
+      "crop": [
+        0.0,
+        0.0,
+        1.0,
+        1.0
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "Hitachi drill",
+            "match": [
+              "hitachi",
+              "metabo"
+            ],
+            "category": "Power Tools"
+          },
+          {
+            "label": "Milwaukee drill",
+            "match": [
+              "milwaukee"
+            ],
+            "category": "Power Tools",
+            "battery_platform": [
+              "Milwaukee M12"
+            ]
+          },
+          {
+            "label": "Bosch drill",
+            "match": [
+              "bosch"
+            ],
+            "category": "Power Tools"
+          }
+        ],
+        "max_listings": 5
+      },
+      "source": {
+        "title": "Drill Test",
+        "creator": "Charles & Hudson",
+        "creator_url": "https://www.flickr.com/photos/34383603@N03",
+        "license": "by-sa",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/2.0/",
+        "landing_url": "https://www.flickr.com/photos/34383603@N03/4743321975",
+        "image_url": "https://live.staticflickr.com/4121/4743321975_347505bec0_b.jpg"
+      }
+    },
+    {
+      "id": "jet-cabinet-table-saw",
+      "file": "jet-cabinet-table-saw.jpg",
+      "difficulty": "easy",
+      "notes": "Jet cabinet table saw in a shop; dust collector in the background.",
+      "crop": [
+        0.04,
+        0.03,
+        0.96,
+        0.95
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "table saw",
+            "match": [
+              "table saw",
+              "cabinet saw"
+            ],
+            "category": "Woodworking",
+            "brand": "Jet",
+            "risk_tier": "waiver"
+          }
+        ],
+        "max_listings": 3
+      },
+      "source": {
+        "title": "My new Jet Deluxe Xacta table saw",
+        "creator": "simonov",
+        "creator_url": "https://www.flickr.com/photos/26209464@N00",
+        "license": "by-sa",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/2.0/",
+        "landing_url": "https://www.flickr.com/photos/26209464@N00/31132571703",
+        "image_url": "https://live.staticflickr.com/262/31132571703_f967172b9d_b.jpg"
+      }
+    },
+    {
+      "id": "dewalt-miter-saw",
+      "file": "dewalt-miter-saw.jpg",
+      "difficulty": "easy",
+      "notes": "DeWalt compound miter saw on a bench.",
+      "crop": [
+        0.1,
+        0.0,
+        1.0,
+        1.0
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "miter saw",
+            "match": [
+              "miter saw",
+              "mitre saw",
+              "chop saw"
+            ],
+            "category": [
+              "Woodworking",
+              "Power Tools"
+            ],
+            "brand": "DeWalt",
+            "risk_tier": "waiver"
+          }
+        ],
+        "max_listings": 2
+      },
+      "source": {
+        "title": "Miter saw",
+        "creator": "Klaser Films",
+        "creator_url": "https://www.flickr.com/photos/22563539@N00",
+        "license": "by-sa",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/2.0/",
+        "landing_url": "https://www.flickr.com/photos/22563539@N00/3069124208",
+        "image_url": "https://live.staticflickr.com/3244/3069124208_c9e9c2a453_b.jpg"
+      }
+    },
+    {
+      "id": "dewalt-truck-bed",
+      "file": "dewalt-truck-bed.jpg",
+      "difficulty": "hard",
+      "notes": "Contractor's truck bed: DeWalt miter saw, jobsite table saw, drill, random-orbit sander and cases.",
+      "crop": [
+        0.0,
+        0.3,
+        1.0,
+        1.0
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "miter saw",
+            "match": [
+              "miter saw",
+              "mitre saw",
+              "chop saw"
+            ],
+            "brand": "DeWalt"
+          },
+          {
+            "label": "table saw",
+            "match": [
+              "table saw",
+              "jobsite saw"
+            ],
+            "brand": "DeWalt"
+          },
+          {
+            "label": "drill",
+            "match": [
+              "drill",
+              "driver"
+            ],
+            "brand": "DeWalt"
+          },
+          {
+            "label": "sander",
+            "match": [
+              "sander"
+            ]
+          }
+        ],
+        "max_listings": 7
+      },
+      "source": {
+        "title": "DeWalt Tools - Seaport",
+        "creator": "dravium1",
+        "creator_url": "https://www.flickr.com/photos/8194018@N07",
+        "license": "by-sa",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/2.0/",
+        "landing_url": "https://www.flickr.com/photos/8194018@N07/3295777381",
+        "image_url": "https://live.staticflickr.com/3323/3295777381_132b02ef5c_b.jpg"
+      }
+    },
+    {
+      "id": "dewalt-truck-bed-2",
+      "file": "dewalt-truck-bed-2.jpg",
+      "difficulty": "medium",
+      "notes": "DeWalt miter saw and drill with cases in a truck bed.",
+      "crop": [
+        0.0,
+        0.22,
+        1.0,
+        1.0
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "miter saw",
+            "match": [
+              "miter saw",
+              "mitre saw",
+              "chop saw"
+            ],
+            "brand": "DeWalt"
+          },
+          {
+            "label": "drill",
+            "match": [
+              "drill",
+              "driver"
+            ],
+            "brand": "DeWalt"
+          }
+        ],
+        "max_listings": 4
+      },
+      "source": {
+        "title": "DeWalt Tools - Zakim",
+        "creator": "dravium1",
+        "creator_url": "https://www.flickr.com/photos/8194018@N07",
+        "license": "by-sa",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/2.0/",
+        "landing_url": "https://www.flickr.com/photos/8194018@N07/3295777247",
+        "image_url": "https://live.staticflickr.com/3353/3295777247_e7b8c9414f_b.jpg"
+      }
+    },
+    {
+      "id": "portable-concrete-mixer",
+      "file": "portable-concrete-mixer.jpg",
+      "difficulty": "medium",
+      "notes": "Portable drum concrete mixer on a trailer, being rinsed into a wheelbarrow.",
+      "crop": [
+        0.0,
+        0.0,
+        1.0,
+        0.96
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "concrete mixer",
+            "match": [
+              "mixer"
+            ],
+            "category": "Masonry & Concrete"
+          }
+        ],
+        "max_listings": 3
+      },
+      "source": {
+        "title": "Brandon cleaning the concrete mixer using water and a wheelbarrow, specially set up portable mixer truck, for fence installation, raining, Seattle, Washington, USA",
+        "creator": "Wonderlane",
+        "creator_url": "https://www.flickr.com/photos/71401718@N00",
+        "license": "by",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/",
+        "landing_url": "https://www.flickr.com/photos/71401718@N00/11913280726",
+        "image_url": "https://live.staticflickr.com/3700/11913280726_47f448ebe9_b.jpg"
+      }
+    },
+    {
+      "id": "backpack-leaf-blowers",
+      "file": "backpack-leaf-blowers.jpg",
+      "difficulty": "medium",
+      "notes": "Crew wearing gas backpack leaf blowers; identical units should be one listing.",
+      "crop": [
+        0.25,
+        0.0,
+        1.0,
+        1.0
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "backpack leaf blower",
+            "match": [
+              "blower"
+            ],
+            "category": "Outdoor & Yard",
+            "power_source": "Gas"
+          }
+        ],
+        "max_listings": 2
+      },
+      "source": {
+        "title": "Leaf Blowers 17",
+        "creator": "hectorir",
+        "creator_url": "https://www.flickr.com/photos/30806435@N04",
+        "license": "by",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/",
+        "landing_url": "https://www.flickr.com/photos/30806435@N04/4117329407",
+        "image_url": "https://live.staticflickr.com/2519/4117329407_7f087f1d54_b.jpg"
+      }
+    },
+    {
+      "id": "ryobi-inspection-camera",
+      "file": "ryobi-inspection-camera.jpg",
+      "difficulty": "easy",
+      "notes": "Ryobi TEK4 inspection scope.",
+      "crop": [
+        0.05,
+        0.0,
+        0.95,
+        1.0
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "inspection camera",
+            "match": [
+              "inspection",
+              "scope",
+              "camera",
+              "borescope"
+            ],
+            "brand": "Ryobi"
+          }
+        ],
+        "max_listings": 1
+      },
+      "source": {
+        "title": "Ryobi Remote Inspection Camera",
+        "creator": "Charles & Hudson",
+        "creator_url": "https://www.flickr.com/photos/34383603@N03",
+        "license": "by-sa",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/2.0/",
+        "landing_url": "https://www.flickr.com/photos/34383603@N03/5203610090",
+        "image_url": "https://live.staticflickr.com/4145/5203610090_36b877286e_b.jpg"
+      }
+    },
+    {
+      "id": "ryobi-grinder-in-bag",
+      "file": "ryobi-grinder-in-bag.jpg",
+      "difficulty": "medium",
+      "notes": "Ryobi ONE+ angle grinder in its tool bag.",
+      "crop": [
+        0.0,
+        0.0,
+        1.0,
+        1.0
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "angle grinder",
+            "match": [
+              "grinder"
+            ],
+            "category": "Power Tools",
+            "brand": "Ryobi",
+            "battery_platform": [
+              "Ryobi ONE+"
+            ],
+            "risk_tier": "waiver"
+          }
+        ],
+        "max_listings": 3
+      },
+      "source": {
+        "title": "Ryobi One+ Lithium Power Tool Kit",
+        "creator": "PseudoGil",
+        "creator_url": "https://www.flickr.com/photos/20179579@N00",
+        "license": "by",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/",
+        "landing_url": "https://www.flickr.com/photos/20179579@N00/2325544804",
+        "image_url": "https://live.staticflickr.com/3249/2325544804_49518f1c37_b.jpg"
+      }
+    },
+    {
+      "id": "pegboard-hand-tools",
+      "file": "pegboard-hand-tools.jpg",
+      "difficulty": "restraint",
+      "notes": "Pegboard of hand saws, hammers, levels and clamps. Mostly under $30 each: should list little or nothing.",
+      "crop": [
+        0.03,
+        0.03,
+        0.97,
+        0.97
+      ],
+      "expect": {
+        "tools": [],
+        "max_listings": 2
+      },
+      "source": {
+        "title": "tools",
+        "creator": "ndrwfgg",
+        "creator_url": "https://www.flickr.com/photos/69024001@N00",
+        "license": "by",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/",
+        "landing_url": "https://www.flickr.com/photos/69024001@N00/61864434",
+        "image_url": "https://live.staticflickr.com/31/61864434_df8782cdb2_b.jpg"
+      }
+    },
+    {
+      "id": "dim-basement-shop",
+      "file": "dim-basement-shop.jpg",
+      "difficulty": "hard",
+      "notes": "Dim basement workshop; a contractor table saw on a mobile base is small, right of center.",
+      "crop": [
+        0.0,
+        0.1,
+        1.0,
+        1.0
+      ],
+      "expect": {
+        "tools": [
+          {
+            "label": "table saw",
+            "match": [
+              "table saw",
+              "contractor saw"
+            ]
+          }
+        ],
+        "max_listings": 3
+      },
+      "source": {
+        "title": "Turning over the tools.",
+        "creator": "eschipul",
+        "creator_url": "https://www.flickr.com/photos/16638697@N00",
+        "license": "by",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/",
+        "landing_url": "https://www.flickr.com/photos/16638697@N00/27616250774",
+        "image_url": "https://live.staticflickr.com/8626/27616250774_881ed80b63_b.jpg"
+      }
+    },
+    {
+      "id": "living-room-no-tools",
+      "file": "living-room-no-tools.jpg",
+      "difficulty": "negative",
+      "notes": "Living room with no tools at all: should produce zero listings.",
+      "crop": [
+        0.03,
+        0.03,
+        0.97,
+        0.97
+      ],
+      "expect": {
+        "tools": [],
+        "max_listings": 0
+      },
+      "source": {
+        "title": "Amalfi | Sherwood Real Estae",
+        "creator": "sherwoodrealestate",
+        "creator_url": "https://www.flickr.com/photos/59240844@N02",
+        "license": "by",
+        "license_version": "2.0",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/",
+        "landing_url": "https://www.flickr.com/photos/59240844@N02/5544768001",
+        "image_url": "https://live.staticflickr.com/5133/5544768001_a3d5d16c21_b.jpg"
+      }
+    }
+  ]
+}

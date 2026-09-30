@@ -296,6 +296,26 @@ th { font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; color:
 .listing-rows .result { grid-template-columns: 96px 1fr auto auto; }
 .listing-rows form { margin: 0; }
 
+/* ---------- model test bench ---------- */
+.eval-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem 1rem; margin: 1rem 0; padding: .9rem 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.tier-picks { display: flex; flex-wrap: wrap; gap: .5rem; flex-basis: 100%; }
+.tier-pick { margin: 0; padding: .45rem .75rem; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.tier-pick:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); }
+.tier-pick span { display: flex; flex-direction: column; line-height: 1.3; }
+.eval-cases { display: flex; flex-direction: column; }
+.eval-case { display: grid; grid-template-columns: 220px 1fr; gap: 1rem; padding: 1rem 0; border-bottom: 1px solid var(--border); }
+.eval-thumb img { width: 100%; border-radius: var(--radius-sm); display: block; }
+.eval-title { display: flex; align-items: center; gap: .5rem; }
+.eval-expect { margin: .4rem 0; display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+.eval-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: .6rem; margin: .5rem 0; }
+.eval-result { border: 1px solid var(--border); border-left: 3px solid var(--border-strong); border-radius: var(--radius-sm); padding: .5rem .65rem; background: var(--surface); }
+.eval-result.pass { border-left-color: var(--green); }
+.eval-result.fail { border-left-color: var(--warn); }
+.eval-result-head { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-bottom: .25rem; }
+.eval-drafts { margin: .3rem 0 0; padding-left: 1.1rem; }
+.eval-credit { margin-top: .3rem; }
+@media (max-width: 760px) { .eval-case { grid-template-columns: 1fr; } }
+
 /* ---------- phones ---------- */
 @media (max-width: 760px) {
     .topbar { position: static; }

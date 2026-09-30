@@ -8,7 +8,7 @@
     <div>
         <h1 class="posting-title">{{ tool.name }}</h1>
         <div class="posting-sub">
-            <span class="price">${{ '%.0f' | format(tool.daily_price) }}/day</span>
+            <span class="price">{{ tool.daily_price | money }}/day</span>
             <span>{{ tool.neighborhood | lower }} · {{ miles }} mi away</span>
             <span>posted by {{ tool.owner_name }}</span>
         </div>
@@ -42,7 +42,7 @@
         <div class="note">
             <b>battery add-ons from this owner:</b>
             {% for a in addons %}
-            <a href="{{ url_for('tool_detail', tool_id=a.id) }}">{{ a.name }}</a> (${{ '%.0f' | format(a.daily_price) }}/day){{ ', ' if not loop.last }}
+            <a href="{{ url_for('tool_detail', tool_id=a.id) }}">{{ a.name }}</a> ({{ a.daily_price | money }}/day){{ ', ' if not loop.last }}
             {% endfor %}
         </div>
         {% endif %}
@@ -60,7 +60,7 @@
         <div class="note">This is your listing. Switch users (top right) to test renting it.</div>
         {% else %}
         <form class="reply-box" method="post" action="{{ url_for('book_tool', tool_id=tool.id) }}" id="bookForm" data-tool-id="{{ tool.id }}">
-            <div class="reply-price">${{ '%.0f' | format(tool.daily_price) }} <span>/ day · 25% off 7+ days</span></div>
+            <div class="reply-price">{{ tool.daily_price | money }} <span>/ day · 25% off 7+ days</span></div>
             <div class="row">
                 <label>pick up<input type="date" name="start" min="{{ today }}" value="{{ today }}" required></label>
                 <label>return<input type="date" name="end" min="{{ today }}" value="{{ today }}" required></label>

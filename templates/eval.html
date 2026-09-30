@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}model test bench{% endblock %}
+{% block crumb %}<span class="sep">›</span><span>test bench</span>{% endblock %}
+{% block content %}
+<h1>model test bench</h1>
+<p class="lede">Runs {{ cases | length }} openly licensed garage and tool photos through snap-to-list and grades the drafts against what's actually in each photo. Use it to compare models and to check that changes don't make recognition worse.</p>
+
+{% if needs_key %}
+<div class="flash flash-error">Set an <code>EVAL_KEY</code> app setting in Azure, then open this page as <code>/eval?key=&lt;that value&gt;</code>. The key keeps strangers from running up model costs.</div>
+{% elif not allowed %}
+<div class="flash flash-error">Add <code>?key=&lt;EVAL_KEY&gt;</code> to the address to run tests.</div>
+{% endif %}
+
+<div class="eval-controls" id="evalControls" data-key="{{ key }}" data-cases='{{ cases | map(attribute="id") | list | tojson }}'>
+    <div class="tier-picks">
+        {% for t in tiers %}
+        <label class="inline tier-pick"><input type="checkbox" value="{{ t }}" {{ 'checked' if t == 'pipeline' }}>
+            <span><b>{{ t }}</b>
+            <span class="muted small">{% if t == 'pipeline' %}what the app does: photos → {{ photo_tier }}{{ ', low confidence → sol' if photo_tier != 'sol' }}{% else %}{{ t }} only, no second opinion{% endif %}</span></span>
+        </label>
+        {% endfor %}
+    </div>
+    <button class="btn btn-primary" id="runAll" {{ 'disabled' if not allowed }}>run all {{ cases | length }} cases</button>
+    <span class="muted small">Rough cost per full run: luna ~$0.10–0.20, terra ~$0.20–0.50, sol ~$1–2.</span>
+</div>
+
+<div class="progress-card" id="evalProgress" hidden>
+    <div class="progress-head"><b id="evalStatus">running…</b><span class="muted small" id="evalCount"></span></div>
+    <div class="progress"><div class="progress-bar" id="evalBar"></div></div>
+</div>
+
+<div id="evalSummary"></div>
+
+<div class="bar"><span>test cases</span><span class="muted">expected tools · results appear under each photo</span></div>
+<div class="eval-cases">
+    {% for c in cases %}
+    <div class="eval-case" id="case-{{ c.id }}">
+        <a href="{{ url_for('eval_image', filename=c.file) }}" target="_blank" class="eval-thumb">
+            <img src="{{ url_for('eval_image', filename=c.file) }}" alt="{{ c.id }}" loading="lazy">
+        </a>
+        <div class="eval-body">
+            <div class="eval-title"><b>{{ c.id }}</b> <span class="tag">{{ c.difficulty }}</span></div>
+            <div class="muted small">{{ c.notes }}</div>
+            <div class="small eval-expect">
+                <b>expect:</b>
+                {% for t in c.expect.tools %}
+                <span class="tag">{{ t.label }}{% if t.brand %} · {{ t.brand }}{% endif %}{% if t.battery_platform %} · {{ t.battery_platform | join(' / ') }}{% endif %}</span>
+                {% else %}
+                <span class="tag">nothing rentable</span>
+                {% endfor %}
+                <span class="muted">· at most {{ c.expect.max_listings }} listing{{ 's' if c.expect.max_listings != 1 }}</span>
+            </div>
+            <div class="eval-results" data-results></div>
+            <div class="muted small eval-credit">photo: <a href="{{ c.source.landing_url }}" target="_blank" rel="noopener">{{ c.source.creator or 'unknown' }}</a>, {{ c.source.license | upper }} {{ c.source.license_version }}</div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="bar"><span>previous runs</span></div>
+{% if runs %}
+<div class="table-wrap">
+<table>
+    <thead><tr><th>started</th><th>model</th><th>avg score</th><th>passed</th><th>errors</th><th>cost</th><th>avg time</th><th></th></tr></thead>
+    <tbody>
+    {% for r in runs %}
+    <tr>
+        <td>{{ r.started | replace('T', ' ') }}</td>
+        <td><b>{{ r.tier }}</b></td>
+        <td>{{ r.avg_score }}</td>
+        <td>{{ r.passed }}/{{ r.cases }}</td>
+        <td>{{ r.errors }}</td>
+        <td>${{ '%.4f' | format(r.cost or 0) }}</td>
+        <td>{{ r.seconds }}s</td>
+        <td class="row-actions"><button class="btn btn-small" data-load-run="{{ r.run_id }}" {{ 'disabled' if not allowed }}>show</button></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="muted">No runs yet.</p>
+{% endif %}
+
+<p class="muted small">Photos are openly licensed and credited under each image; see <code>evals/ATTRIBUTION.md</code>. Add your own garage photos to <code>evals/cases.json</code> to test with them too.</p>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/eval.js') }}"></script>
+{% endblock %}
