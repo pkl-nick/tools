@@ -66,8 +66,10 @@ With no key set, the app runs in demo mode and returns sample drafts.
 
 ## 2. App Service
 
+**Scripted:** run `bash deploy/azure-deploy.sh` in Azure Cloud Shell. It does all of the steps below, and is safe to re-run to redeploy.
+
 1. **Web App:** Linux, Python 3.11. Put it on the portfolio's existing App Service Plan to avoid paying for a second plan (B1 is plenty for a POC).
-2. **Startup command:** `gunicorn --bind=0.0.0.0 --timeout 120 --workers 2 app:app`
+2. **Startup command:** `gunicorn --bind=0.0.0.0 --timeout 120 --workers 1 --threads 4 app:app`. Use one worker process because SQLite on the `/home` network share doesn't handle locking across processes well.
 3. **Application settings:**
    - the model settings above
    - `FLASK_SECRET_KEY` (random string)
