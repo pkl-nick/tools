@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}admin{% endblock %}
+{% block crumb %}<span class="sep">›</span><span>admin</span>{% endblock %}
+{% block content %}
+{% set k = m.kpis %}
+<div class="admin-head">
+    <div>
+        <h1>admin dashboard</h1>
+        <p class="muted small">Live from the database · photos in {{ media }} · photos → {{ models.photo }}, video frames → {{ models.video }} · upload cap {{ upload_limit }}/user/day</p>
+    </div>
+    <div class="row-actions">
+        <a class="btn btn-small" href="{{ url_for('eval_page') }}">model test bench</a>
+        <form method="post" action="{{ url_for('admin_logout') }}">{{ csrf_field() }}<button class="btn btn-small">sign out of admin</button></form>
+    </div>
+</div>
+
+<div class="stats kpis">
+    <div class="stat"><b>{{ k.users }}</b><span>members · +{{ k.users_7d }} this week</span></div>
+    <div class="stat"><b>{{ k.active_users_7d }}</b><span>active members (7 days)</span></div>
+    <div class="stat"><b>{{ k.visitors_7d }}</b><span>visitors · {{ k.page_views_7d }} page views (7 days)</span></div>
+    <div class="stat"><b>{{ k.listings_live }}</b><span>live listings from {{ k.owners }} owner{{ 's' if k.owners != 1 }}{% if k.listings_live_demo %} · +{{ k.listings_live_demo }} samples{% endif %}</span></div>
+    <div class="stat"><b>{{ k.posts_7d }}</b><span>posts this week · {{ k.posts_30d }} in 30 days</span></div>
+    <div class="stat"><b>{{ k.drafts_pending }}</b><span>AI drafts waiting for review</span></div>
+    <div class="stat"><b>{{ k.bookings }}</b><span>rental requests · {{ k.bookings_7d }} this week · {{ k.bookings_accepted }} accepted</span></div>
+    <div class="stat"><b>{{ k.gmv | money }}</b><span>rental volume · {{ k.platform_revenue | money }} platform revenue{% if k.bookings_accepted %} · {{ k.delivery_share | int }}% delivered{% endif %}</span></div>
+    <div class="stat"><b>{{ k.ai_cost_7d | money }}</b><span>AI spend this week · {{ k.ai_cost_30d | money }} in 30 days</span></div>
+    <div class="stat"><b>{{ k.ai_calls_7d }}</b><span>photos analyzed this week · {{ k.ai_avg_seconds_7d }}s avg{% if k.upload_limited_7d %} · {{ k.upload_limited_7d }} hit the cap{% endif %}</span></div>
+</div>
+
+<div class="bar"><span>last 30 days</span><span class="muted">hover a column for the day's number</span></div>
+<div class="chart-grid">
+    {% for title, c, note in charts %}
+    <figure class="chart-card">
+        <figcaption>
+            <span><b>{{ title }}</b> <span class="muted small">{{ note }}</span></span>
+            <span class="chart-total">{{ c.total }} <span class="muted small">total</span></span>
+        </figcaption>
+        <svg class="column-chart" viewBox="0 0 {{ c.width }} {{ c.height }}" role="img" aria-label="{{ title }} per day, last 30 days: {{ c.total }} total, peak {{ c.peak }}">
+            {% for t in c.ticks %}
+            <line class="grid" x1="{{ c.left }}" x2="{{ c.right }}" y1="{{ t.y }}" y2="{{ t.y }}"/>
+            <text class="tick" x="{{ c.left - 6 }}" y="{{ t.y + 4 }}" text-anchor="end">{{ t.label }}</text>
+            {% endfor %}
+            {% for b in c.bars %}{% if b.path %}<path class="col" d="{{ b.path }}"/>{% endif %}{% endfor %}
+            {% for x in c.xlabels %}<text class="tick" x="{{ x.x }}" y="{{ c.height - 5 }}" text-anchor="middle">{{ x.label }}</text>{% endfor %}
+            {% for b in c.bars %}<rect class="hit" x="{{ b.hit_x }}" y="0" width="{{ b.hit_w }}" height="{{ c.base_y }}" data-tip="{{ b.label }}"><title>{{ b.label }}</title></rect>{% endfor %}
+        </svg>
+        <details class="chart-table"><summary class="small muted">show as table</summary>
+            <table><thead><tr><th>day</th><th>{{ title }}</th></tr></thead>
+                <tbody>{% for d, v in c.rows | reverse %}<tr><td>{{ d }}</td><td>{{ v }}</td></tr>{% endfor %}</tbody></table>
+        </details>
+    </figure>
+    {% endfor %}
+</div>
+<div class="chart-tip" id="chartTip" hidden></div>
+
+<div class="admin-grid">
+    <section>
+        <div class="bar"><span>funnel · last 30 days</span></div>
+        {% set top = (m.funnel[0][1] or 1) %}
+        <div class="funnel">
+            {% for label, n in m.funnel %}
+            <div class="funnel-row">
+                <span class="funnel-label">{{ label }}</span>
+                <span class="funnel-track"><span class="funnel-fill" style="width: {{ [100 * n / top, 0.5 if n else 0] | max }}%"></span></span>
+                <span class="funnel-value">{{ n }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    <section>
+        <div class="bar"><span>AI usage by model · last 30 days</span></div>
+        {% if m.ai_by_model %}
+        <div class="table-wrap"><table>
+            <thead><tr><th>model</th><th>source</th><th>calls</th><th>drafts</th><th>cost</th><th>avg time</th></tr></thead>
+            <tbody>{% for r in m.ai_by_model %}
+            <tr><td>{{ r.model }}{% if r.escalated %} <span class="tag">re-checked</span>{% endif %}</td><td>{{ r.source }}</td><td>{{ r.calls }}</td><td>{{ r.drafts }}</td><td>${{ '%.4f' | format(r.cost) }}</td><td>{{ r.avg_seconds }}s</td></tr>
+            {% endfor %}</tbody></table></div>
+        {% else %}<p class="muted">No photos analyzed yet.</p>{% endif %}
+    </section>
+    <section>
+        <div class="bar"><span>live listings by category</span></div>
+        {% if m.categories %}
+        <div class="table-wrap"><table>
+            <thead><tr><th>category</th><th>listings</th><th>avg $/day</th></tr></thead>
+            <tbody>{% for c in m.categories %}<tr><td>{{ c.category }}</td><td>{{ c.n }}</td><td>{{ c.avg_price | money }}</td></tr>{% endfor %}</tbody>
+        </table></div>
+        {% else %}<p class="muted">No member listings yet (samples aren't counted).</p>{% endif %}
+    </section>
+    <section>
+        <div class="bar"><span>top pages · last 7 days</span></div>
+        {% if m.top_pages %}
+        <div class="table-wrap"><table>
+            <thead><tr><th>page</th><th>views</th><th>visitors</th></tr></thead>
+            <tbody>{% for p in m.top_pages %}<tr><td>{{ p.path }}</td><td>{{ p.views }}</td><td>{{ p.visitors }}</td></tr>{% endfor %}</tbody>
+        </table></div>
+        {% else %}<p class="muted">No visits yet.</p>{% endif %}
+    </section>
+</div>
+
+<div class="bar"><span>members</span><span class="muted">newest first</span></div>
+{% if m.recent_users %}
+<div class="table-wrap"><table>
+    <thead><tr><th>name</th><th>email</th><th>neighborhood</th><th>listings</th><th>rentals</th><th>joined</th><th>last login</th><th></th></tr></thead>
+    <tbody>{% for u in m.recent_users %}
+    <tr>
+        <td><a href="{{ url_for('profile', user_id=u.id) }}">{{ u.name }}</a></td><td>{{ u.email }}</td><td>{{ u.neighborhood }}</td>
+        <td>{{ u.listings }}</td><td>{{ u.rentals }}</td><td>{{ (u.created_at or '')[:10] }}</td><td>{{ (u.last_login_at or '')[:16] | replace('T', ' ') }}</td>
+        <td class="row-actions"><form method="post" action="{{ url_for('admin_reset_password', user_id=u.id) }}" onsubmit="return confirm('Give {{ u.name }} a temporary password? Their current one stops working.')">{{ csrf_field() }}<button class="btn btn-small">reset password</button></form></td>
+    </tr>
+    {% endfor %}</tbody>
+</table></div>
+{% else %}<p class="muted">No members yet.</p>{% endif %}
+
+<div class="bar"><span>recent activity</span><span class="muted">page views hidden</span></div>
+{% if m.recent_events %}
+<div class="table-wrap"><table>
+    <thead><tr><th>when</th><th>event</th><th>member</th><th>value</th><th>details</th></tr></thead>
+    <tbody>{% for e in m.recent_events %}
+    <tr><td>{{ e.ts | replace('T', ' ') }}</td><td>{{ e.event | replace('_', ' ') }}</td><td>{{ e.user_name or '—' }}</td>
+        <td>{% if e.value is not none %}{{ '%g' % e.value }}{% endif %}{% if e.duration %} · {{ e.duration }}s{% endif %}</td>
+        <td class="small muted">{{ e.props or '' }}</td></tr>
+    {% endfor %}</tbody>
+</table></div>
+{% else %}<p class="muted">Nothing yet.</p>{% endif %}
+
+<div class="bar"><span>operations</span></div>
+<div class="ops">
+    <div class="op">
+        <b>database backups</b>
+        <p class="muted small">Copies the live database to {% if blob %}the <code>toolshare-backups</code> blob container{% else %}local disk (Blob Storage isn't configured){% endif %}.</p>
+        <form method="post" action="{{ url_for('admin_backup') }}">{{ csrf_field() }}<button class="btn btn-small btn-primary">back up now</button></form>
+        {% if backup_error %}<p class="flash flash-error small">Couldn't list backups: {{ backup_error }}</p>{% endif %}
+        {% if backups %}
+        <ul class="small">{% for key, size, when in backups %}<li><a href="{{ url_for('admin_backup_download', key=key) }}">{{ key }}</a> <span class="muted">{{ size // 1024 }} KB · {{ when[:16] | replace('T', ' ') }}</span></li>{% endfor %}</ul>
+        {% endif %}
+    </div>
+    <div class="op">
+        <b>photo storage</b>
+        <p class="muted small">New photos go to {{ media }}.{% if legacy_photos %} {{ legacy_photos }} older photo{{ 's are' if legacy_photos != 1 else ' is' }} still on the web server's disk.{% endif %}</p>
+        {% if legacy_photos and blob %}
+        <form method="post" action="{{ url_for('admin_migrate_media') }}">{{ csrf_field() }}<button class="btn btn-small">move them to Blob Storage</button></form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Column hover tooltip
+    (function () {
+        const tip = document.getElementById('chartTip');
+        document.querySelectorAll('.column-chart .hit').forEach((r) => {
+            r.addEventListener('mouseenter', () => { tip.textContent = r.dataset.tip; tip.hidden = false; r.classList.add('on'); });
+            r.addEventListener('mousemove', (e) => { tip.style.left = (e.pageX + 12) + 'px'; tip.style.top = (e.pageY - 34) + 'px'; });
+            r.addEventListener('mouseleave', () => { tip.hidden = true; r.classList.remove('on'); });
+        });
+    })();
+</script>
+{% endblock %}

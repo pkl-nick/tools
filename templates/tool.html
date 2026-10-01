@@ -10,7 +10,8 @@
         <div class="posting-sub">
             <span class="price">{{ tool.daily_price | money }}/day</span>
             <span>{{ tool.neighborhood | lower }} · {{ miles }} mi away</span>
-            <span>posted by {{ tool.owner_name }}</span>
+            <span>posted by <a href="{{ url_for('profile', user_id=tool.owner_id) }}">{{ tool.owner_name }}</a></span>
+            {% if tool.owner_is_demo %}<span class="tag" title="Example listing to show how toolshare works">sample listing</span>{% endif %}
         </div>
 
         <div class="posting-media">
@@ -56,10 +57,17 @@
     </div>
 
     <aside>
-        {% if tool.owner_id == current_user.id %}
-        <div class="note">This is your listing. Switch users (top right) to test renting it.</div>
+        <a class="owner-card" href="{{ url_for('profile', user_id=tool.owner_id) }}">
+            {% if tool.owner_avatar %}<img class="avatar avatar-md" src="{{ url_for('uploaded_file', filename=tool.owner_avatar) }}" alt="">
+            {% else %}<span class="avatar avatar-md avatar-initials">{{ tool.owner_name | initials }}</span>{% endif %}
+            <span><b>{{ tool.owner_name }}</b><span class="muted small">{{ tool.neighborhood | lower }}{% if tool.owner_since and not tool.owner_is_demo %} · member since {{ tool.owner_since[:7] }}{% endif %}</span></span>
+        </a>
+        {% if current_user and tool.owner_id == current_user.id %}
+        <div class="note">This is your listing. Manage it from <a href="{{ url_for('garage') }}">my garage</a>.</div>
+        {% elif tool.owner_is_demo %}
+        <div class="note">This is a <b>sample listing</b> that shows how toolshare works, so it can't be rented. <a href="{{ url_for('list_tools') }}">Post your own tools</a> to get real listings going near you.</div>
         {% else %}
-        <form class="reply-box" method="post" action="{{ url_for('book_tool', tool_id=tool.id) }}" id="bookForm" data-tool-id="{{ tool.id }}">
+        <form class="reply-box" method="post" action="{{ url_for('book_tool', tool_id=tool.id) }}" id="bookForm" data-tool-id="{{ tool.id }}">{{ csrf_field() }}
             <div class="reply-price">{{ tool.daily_price | money }} <span>/ day · 25% off 7+ days</span></div>
             <div class="row">
                 <label>pick up<input type="date" name="start" min="{{ today }}" value="{{ today }}" required></label>
@@ -88,7 +96,12 @@
             {% endif %}
 
             <div class="quote" id="quote">pick dates to see the price.</div>
+            {% if current_user %}
             <button type="submit" class="btn btn-primary btn-wide">request to rent</button>
+            {% else %}
+            <a class="btn btn-primary btn-wide" href="{{ url_for('login', next=request.path) }}">log in to rent</a>
+            <p class="muted small" style="text-align:center;margin:.4rem 0 0">new here? <a href="{{ url_for('signup', next=request.path) }}">create an account</a></p>
+            {% endif %}
             <p class="muted small" style="text-align:center;margin:.5rem 0 0">you're only charged if the owner accepts</p>
         </form>
         {% endif %}

@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% from "macros.html" import avatar with context %}
+{% block title %}account{% endblock %}
+{% block crumb %}<span class="sep">›</span><span>account</span>{% endblock %}
+{% block content %}
+<div class="account-head">
+    {{ avatar(current_user, 'lg') }}
+    <div>
+        <h1>{{ current_user.name }}</h1>
+        <p class="muted">{{ current_user.neighborhood }} · member since {{ (current_user.created_at or '')[:10] }} · {{ listings }} tool{{ 's' if listings != 1 }} listed ·
+            <a href="{{ url_for('profile', user_id=current_user.id) }}">view public profile</a></p>
+    </div>
+</div>
+
+<div class="account-grid">
+    <section>
+        <div class="bar">profile</div>
+        <form method="post" action="{{ url_for('account') }}">{{ csrf_field() }}
+            <div class="row">
+                <label>name<input name="name" value="{{ current_user.name }}" maxlength="60" required></label>
+                <label>neighborhood<input name="neighborhood" value="{{ current_user.neighborhood }}" maxlength="60" required></label>
+            </div>
+            <label>email<input type="email" name="email" value="{{ current_user.email }}" required>
+                <span class="hint">used to log in; never shown to other members</span></label>
+            <label>about you<textarea name="bio" rows="3" maxlength="500" placeholder="What kind of projects do you do? What gear do you have?">{{ current_user.bio }}</textarea></label>
+            <div class="field">
+                <span class="field-label">location</span>
+                <input type="hidden" name="lat" value="">
+                <input type="hidden" name="lng" value="">
+                <button type="button" class="btn btn-small" id="useLocation">update to my current location</button>
+                <span class="hint" id="locationStatus">Used for distances. Rounded to about a block and never shown.</span>
+            </div>
+            <div class="field">
+                <span class="field-label">batteries you own</span>
+                <div class="checks">
+                    {% for p in platforms if p != 'Other' %}
+                    <label class="inline chip-check"><input type="checkbox" name="battery_platforms" value="{{ p }}" {{ 'checked' if p in my_platforms }}> {{ p }}</label>
+                    {% endfor %}
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">save profile</button>
+        </form>
+    </section>
+
+    <section>
+        <div class="bar">profile photo</div>
+        <form method="post" action="{{ url_for('account_avatar') }}" enctype="multipart/form-data" class="avatar-form">{{ csrf_field() }}
+            {{ avatar(current_user, 'lg') }}
+            <div>
+                <input type="file" name="avatar" accept="image/*" required>
+                <span class="hint">JPG, PNG or WEBP, under 5 MB. A friendly face helps neighbors trust you.</span>
+                <button type="submit" class="btn btn-small">upload photo</button>
+            </div>
+        </form>
+
+        <div class="bar">password</div>
+        <form method="post" action="{{ url_for('account_password') }}">{{ csrf_field() }}
+            <label>current password<input type="password" name="current_password" autocomplete="current-password" required></label>
+            <label>new password<input type="password" name="new_password" autocomplete="new-password" minlength="{{ min_password }}" required>
+                <span class="hint">at least {{ min_password }} characters</span></label>
+            <button type="submit" class="btn">change password</button>
+        </form>
+    </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/location.js') }}"></script>{% endblock %}

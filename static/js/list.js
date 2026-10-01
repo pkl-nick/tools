@@ -1,6 +1,7 @@
 // Snap-to-list: resize photos or pull frames from a video in the browser,
 // then send each image to /api/analyze-photo one at a time.
 (function () {
+    const CSRF = document.querySelector('meta[name="csrf-token"]').content;
     const MAX_EDGE = 1600;            // resize before upload: faster and cheaper, plenty for label reading
     const MAX_VIDEO_FRAMES = 24;      // cap on frames sent per video
     const MIN_FRAME_GAP_S = 1.5;      // sample at most one frame every 1.5 s
@@ -122,7 +123,7 @@
             body.append('batch_id', batchId);
             body.append('source', source);   // video frames use the cheaper model
             try {
-                const res = await fetch('/api/analyze-photo', { method: 'POST', body });
+                const res = await fetch('/api/analyze-photo', { method: 'POST', body, headers: { 'X-CSRF-Token': CSRF } });
                 const data = await res.json();
                 if (!data.success) throw new Error(data.error || 'Upload failed');
                 created += data.drafts_created;

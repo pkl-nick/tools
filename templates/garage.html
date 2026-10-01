@@ -21,17 +21,17 @@
     {% for b in incoming %}
     <tr>
         <td>{{ b.tool_name }}{% if b.message %}<div class="muted small">"{{ b.message }}"</div>{% endif %}</td>
-        <td>{{ b.renter_name }}</td>
+        <td><a href="{{ url_for('profile', user_id=b.renter_user_id) }}">{{ b.renter_name }}</a></td>
         <td>{{ b.start_date }} → {{ b.end_date }} <span class="muted small">({{ b.days }}d)</span></td>
         <td>{{ 'yes, $%.2f' | format(b.delivery_fee) if b.delivery else 'pickup' }}</td>
         <td>${{ '%.2f' | format(b.owner_payout) }}</td>
         <td>{{ status_tag(b.status) }}</td>
         <td class="row-actions">
             {% if b.status == 'requested' %}
-            <form method="post" action="{{ url_for('update_booking', booking_id=b.id, action='accept') }}"><button class="btn btn-small">accept</button></form>
-            <form method="post" action="{{ url_for('update_booking', booking_id=b.id, action='decline') }}"><button class="btn btn-small">decline</button></form>
+            <form method="post" action="{{ url_for('update_booking', booking_id=b.id, action='accept') }}">{{ csrf_field() }}<button class="btn btn-small">accept</button></form>
+            <form method="post" action="{{ url_for('update_booking', booking_id=b.id, action='decline') }}">{{ csrf_field() }}<button class="btn btn-small">decline</button></form>
             {% elif b.status == 'accepted' %}
-            <form method="post" action="{{ url_for('update_booking', booking_id=b.id, action='returned') }}"><button class="btn btn-small">mark returned</button></form>
+            <form method="post" action="{{ url_for('update_booking', booking_id=b.id, action='returned') }}">{{ csrf_field() }}<button class="btn btn-small">mark returned</button></form>
             {% endif %}
         </td>
     </tr>
@@ -52,14 +52,14 @@
     {% for b in rentals %}
     <tr>
         <td><a href="{{ url_for('tool_detail', tool_id=b.tool_id) }}">{{ b.tool_name }}</a></td>
-        <td>{{ b.owner_name }}</td>
+        <td><a href="{{ url_for('profile', user_id=b.owner_user_id) }}">{{ b.owner_name }}</a></td>
         <td>{{ b.start_date }} → {{ b.end_date }}</td>
         <td>${{ '%.2f' | format(b.total_charge) }}</td>
         <td>${{ '%.0f' | format(b.deposit) }}</td>
         <td>{{ status_tag(b.status) }}</td>
         <td class="row-actions">
             {% if b.status in ('requested', 'accepted') %}
-            <form method="post" action="{{ url_for('update_booking', booking_id=b.id, action='cancel') }}"><button class="btn btn-small">cancel</button></form>
+            <form method="post" action="{{ url_for('update_booking', booking_id=b.id, action='cancel') }}">{{ csrf_field() }}<button class="btn btn-small">cancel</button></form>
             {% endif %}
         </td>
     </tr>
@@ -88,7 +88,7 @@
             <div class="result-meta">{{ t.category | lower }}{{ ' · ' ~ t.battery_platform if t.battery_platform }}</div>
         </div>
         <div class="result-price">{{ t.daily_price | money }}<span class="muted">/day</span></div>
-        <form method="post" action="{{ url_for('unlist_tool', tool_id=t.id) }}"><button class="btn btn-small">remove</button></form>
+        <form method="post" action="{{ url_for('unlist_tool', tool_id=t.id) }}">{{ csrf_field() }}<button class="btn btn-small">remove</button></form>
     </li>
     {% endfor %}
 </ul>

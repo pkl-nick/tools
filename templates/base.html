@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light dark">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{% block title %}tools for rent{% endblock %} · toolshare</title>
     <link rel="icon" href="{{ url_for('static', filename='img/tool.svg') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -12,36 +13,46 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
+    {% from "macros.html" import avatar with context %}
     <header class="topbar">
         <div class="topbar-inner">
             <a class="brand" href="{{ url_for('browse') }}">toolshare</a>
             <form class="topsearch" action="{{ url_for('browse') }}" method="get" role="search">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-                <input type="search" name="q" value="{{ request.args.get('q', '') if request.endpoint == 'browse' }}" placeholder="search tools near {{ current_user.neighborhood | lower }}" aria-label="Search tools">
+                <input type="search" name="q" value="{{ request.args.get('q', '') if request.endpoint == 'browse' }}" placeholder="search tools near {{ (current_user.neighborhood if current_user else area_name) | lower }}" aria-label="Search tools">
             </form>
             <nav class="toplinks">
+                {% if current_user %}
                 <a href="{{ url_for('garage') }}" class="{{ 'active' if request.endpoint == 'garage' }}">my garage</a>
                 {% if draft_count %}
                 <a href="{{ url_for('review_drafts') }}" class="{{ 'active' if request.endpoint == 'review_drafts' }}">drafts <span class="count">{{ draft_count }}</span></a>
                 {% endif %}
                 <a href="{{ url_for('list_tools') }}" class="btn btn-primary btn-post">+ post</a>
+                <details class="account-menu">
+                    <summary aria-label="Account menu">{{ avatar(current_user) }}</summary>
+                    <div class="menu">
+                        <div class="menu-head"><b>{{ current_user.name }}</b><span class="muted small">{{ current_user.email }}</span></div>
+                        <a href="{{ url_for('profile', user_id=current_user.id) }}">public profile</a>
+                        <a href="{{ url_for('account') }}">account settings</a>
+                        <a href="{{ url_for('garage') }}">my garage</a>
+                        {% if is_admin %}<a href="{{ url_for('admin') }}">admin dashboard</a>{% endif %}
+                        <form method="post" action="{{ url_for('logout') }}">{{ csrf_field() }}<button type="submit">log out</button></form>
+                    </div>
+                </details>
+                {% else %}
+                <a href="{{ url_for('login', next=request.full_path if request.endpoint not in ('login', 'signup') else None) }}" class="{{ 'active' if request.endpoint == 'login' }}">log in</a>
+                <a href="{{ url_for('signup') }}" class="btn btn-primary btn-post">sign up</a>
+                {% endif %}
             </nav>
         </div>
         <div class="subbar">
             <div class="crumbs">
-                <span>{{ current_user.neighborhood | lower }}</span>
+                <span>{{ (current_user.neighborhood if current_user else area_name) | lower }}</span>
                 <span class="sep">›</span>
                 <a href="{{ url_for('browse') }}">tools for rent</a>
                 {% block crumb %}{% endblock %}
             </div>
-            <form class="user-switch" method="post" id="userSwitch">
-                <label for="userSelect">acting as</label>
-                <select id="userSelect">
-                    {% for u in all_users %}
-                    <option value="{{ url_for('switch_user', user_id=u.id) }}" {{ 'selected' if u.id == current_user.id }}>{{ u.name }}</option>
-                    {% endfor %}
-                </select>
-            </form>
+            {% if is_admin and request.endpoint != 'admin' %}<a class="small" href="{{ url_for('admin') }}">admin</a>{% endif %}
         </div>
     </header>
 
@@ -65,17 +76,16 @@
         <span class="brand-sm">toolshare</span>
         <a href="{{ url_for('browse') }}">tools for rent</a>
         <a href="{{ url_for('list_tools') }}">post</a>
-        <a href="{{ url_for('garage') }}">my garage</a>
+        {% if current_user %}<a href="{{ url_for('account') }}">account</a>{% else %}<a href="{{ url_for('signup') }}">sign up</a>{% endif %}
         <span class="muted">safety</span>
         <span class="muted">terms</span>
         <span class="muted">&copy; 2026</span>
     </footer>
 
     <script>
-        document.getElementById('userSelect').addEventListener('change', function () {
-            const form = document.getElementById('userSwitch');
-            form.action = this.value;
-            form.submit();
+        // Close the account menu when clicking elsewhere
+        document.addEventListener('click', (e) => {
+            document.querySelectorAll('details.account-menu[open]').forEach((d) => { if (!d.contains(e.target)) d.open = false; });
         });
     </script>
     {% block scripts %}{% endblock %}

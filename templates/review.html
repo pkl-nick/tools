@@ -6,7 +6,7 @@
 <p class="lede">Check what the AI found, fix anything it got wrong, then post them all at once.</p>
 
 {% if drafts %}
-<form method="post" id="reviewForm">
+<form method="post" id="reviewForm">{{ csrf_field() }}
     <div class="bulk-bar">
         <span class="muted">{{ drafts | length }} draft{{ 's' if drafts | length != 1 }}</span>
         <button type="button" class="btn" data-set="approve">approve all</button>

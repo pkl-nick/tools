@@ -88,6 +88,22 @@ CREATE TABLE IF NOT EXISTS eval_results (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_eval_run ON eval_results(run_id);
+
+-- Product telemetry (see telemetry.py)
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    event TEXT NOT NULL,
+    user_id INTEGER,
+    visitor TEXT,          -- random id from the session cookie, for counting anonymous visitors
+    path TEXT,             -- Flask endpoint name, not the raw URL
+    value REAL,            -- e.g. AI cost or booking total
+    duration REAL,         -- seconds
+    props TEXT             -- JSON
+);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+CREATE INDEX IF NOT EXISTS idx_events_event_ts ON events(event, ts);
+CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id, event, ts);
 """
 
 # (name, neighborhood, lat offset, lng offset, battery platforms)
@@ -176,16 +192,18 @@ def get_connection(db_path=None):
     return conn
 
 
-# Bump when a data migration is added; stored in SQLite's PRAGMA user_version
-SCHEMA_VERSION = 1
+# Stored in SQLite's PRAGMA user_version; each migration below brings a database up one step
+SCHEMA_VERSION = 2
 
 
-def init_database(conn, seed=True):
+def init_database(conn, seed=None):
     """Create tables, seed demo data if the database is empty, and run pending migrations"""
+    if seed is None:
+        seed = os.getenv('SEED_DEMO', '1') == '1'
     conn.executescript(SCHEMA)
     if seed and conn.execute('SELECT COUNT(*) FROM users').fetchone()[0] == 0:
         seed_demo_data(conn)
-        conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')   # seed data is already current
+        conn.execute('PRAGMA user_version = 1')   # seed prices are already cut; later migrations still run
     migrate(conn)
     conn.commit()
 
@@ -196,6 +214,18 @@ def migrate(conn):
         # v1: daily prices cut ~90% (now ~1% of replacement value), nearest $0.50, $1 minimum
         conn.execute('UPDATE tools SET daily_price = MAX(1.0, ROUND(daily_price * 0.1 * 2) / 2.0)')
         conn.execute('PRAGMA user_version = 1')
+        version = 1
+    if version < 2:
+        # v2: real accounts. Everyone who existed before accounts is a demo user (no password).
+        for column, decl in [('email', 'TEXT'), ('password_hash', 'TEXT'), ('bio', "TEXT NOT NULL DEFAULT ''"),
+                             ('avatar_path', 'TEXT'), ('is_demo', 'INTEGER NOT NULL DEFAULT 0'),
+                             ('created_at', 'TEXT'), ('last_login_at', 'TEXT')]:
+            conn.execute(f'ALTER TABLE users ADD COLUMN {column} {decl}')
+        conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE)')
+        conn.execute("UPDATE users SET is_demo = 1, created_at = COALESCE(created_at, datetime('now'))")
+        conn.execute('ALTER TABLE tools ADD COLUMN published_at TEXT')
+        conn.execute("UPDATE tools SET published_at = created_at WHERE status = 'listed'")
+        conn.execute('PRAGMA user_version = 2')
 
 
 def seed_demo_data(conn):
@@ -217,7 +247,7 @@ def seed_demo_data(conn):
 TOOL_COLUMNS = [
     'name', 'brand', 'model', 'category', 'power_source', 'battery_platform', 'description',
     'included_items', 'daily_price', 'deposit', 'replacement_value', 'risk_tier', 'safety_notes',
-    'photo_path', 'ai_confidence', 'batch_id', 'status', 'created_at',
+    'photo_path', 'ai_confidence', 'batch_id', 'status', 'created_at', 'published_at',
 ]
 
 

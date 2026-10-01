@@ -1,5 +1,6 @@
 // Model test bench: run each case on each chosen tier, one request at a time
 (function () {
+    const CSRF = document.querySelector('meta[name="csrf-token"]').content;
     const controls = document.getElementById('evalControls');
     if (!controls) return;
     const key = controls.dataset.key;
@@ -83,7 +84,7 @@
                 let r;
                 try {
                     const res = await fetch('/api/eval/run', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF },
                         body: JSON.stringify({ key, run_id: runId, case_id: caseId, tier }),
                     });
                     const data = await res.json();

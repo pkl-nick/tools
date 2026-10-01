@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "macros.html" import avatar with context %}
+{% block title %}{{ person.name }}{% endblock %}
+{% block crumb %}<span class="sep">›</span><span>{{ person.name | lower }}</span>{% endblock %}
+{% block content %}
+<div class="account-head">
+    {{ avatar(person, 'lg') }}
+    <div>
+        <h1>{{ person.name }}{% if person.is_demo %} <span class="tag">sample member</span>{% endif %}</h1>
+        <p class="muted">{{ person.neighborhood }} · {{ miles }} mi away{% if person.created_at and not person.is_demo %} · member since {{ person.created_at[:7] }}{% endif %}
+            {% if completed %} · {{ completed }} rental{{ 's' if completed != 1 }} completed{% endif %}</p>
+        {% if platforms %}<div class="tags">{% for p in platforms %}<span class="tag">{{ p }}</span>{% endfor %}</div>{% endif %}
+    </div>
+    {% if current_user and current_user.id == person.id %}<a class="btn btn-small" href="{{ url_for('account') }}">edit profile</a>{% endif %}
+</div>
+{% if person.bio %}<p class="posting-body">{{ person.bio }}</p>{% endif %}
+
+<div class="bar"><span>{{ tools | length }} tool{{ 's' if tools | length != 1 }} for rent</span></div>
+{% if tools %}
+<ul class="results">
+    {% for t in tools %}
+    <li class="result">
+        <a class="thumb" href="{{ url_for('tool_detail', tool_id=t.id) }}" tabindex="-1">
+            {% if t.photo_path %}<img src="{{ url_for('uploaded_file', filename=t.photo_path) }}" alt="" loading="lazy">
+            {% else %}<img class="placeholder" src="{{ url_for('static', filename='img/tool.svg') }}" alt="">{% endif %}
+        </a>
+        <div class="result-main">
+            <a class="result-title" href="{{ url_for('tool_detail', tool_id=t.id) }}">{{ t.name }}</a>
+            <div class="result-meta"><span>{{ t.category | lower }}</span>{% if t.battery_platform %}<span>{{ t.battery_platform }}</span>{% endif %}</div>
+        </div>
+        <div class="result-price">{{ t.daily_price | money }}<span>/day</span></div>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="muted">Nothing listed yet.</p>
+{% endif %}
+{% endblock %}

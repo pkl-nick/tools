@@ -81,6 +81,15 @@ With no key set, the app runs in demo mode and returns sample drafts.
 4. **Deployment:** Deployment Center → GitHub → `pkl-nick/tools`, pick the branch. Azure generates a GitHub Actions workflow.
 5. **Upload limit:** photos are resized in the browser to about 300–600 KB, so App Service's default request limits are fine. The app caps each request at 15 MB.
 
+## Blob Storage and admin
+
+The deploy script also:
+- creates two **private** containers in the `nradls` storage account: `toolshare-media` (photos) and `toolshare-backups` (database backups);
+- turns on the web app's **system-assigned managed identity** and gives it *Storage Blob Data Contributor* on just those two containers, so it can't read the portfolio's blobs and no storage key is stored anywhere;
+- sets `AZURE_STORAGE_ACCOUNT`, `MEDIA_CONTAINER`, `BACKUP_CONTAINER`, and a generated `ADMIN_PASSWORD`, which it prints at the end.
+
+Role assignments can take a few minutes to take effect, so photo uploads may fail briefly right after the first run. Photos uploaded before this change stay on the web server's disk and keep working. The admin page has a button to move them into Blob Storage.
+
 ## Test bench
 
 The deploy script creates an `EVAL_KEY` app setting and prints a private link: `https://<app>.azurewebsites.net/eval?key=...`. Open it, tick the models to compare and press **run all**. Each case is run one request at a time, so a Sol run takes a few minutes. Results are saved and can be reopened under **previous runs**.

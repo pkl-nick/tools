@@ -68,7 +68,8 @@
                 <span class="tag {{ 'tag-green' if t.battery_platform in my_platforms }}">{{ '⚡ ' if t.battery_platform in my_platforms }}{{ t.battery_platform }}</span>
                 {% endif %}
                 {% if t.risk_tier == 'waiver' %}<span class="tag">safety ack</span>{% endif %}
-                {% if t.owner_id == current_user.id %}<span class="tag tag-blue">yours</span>{% endif %}
+                {% if current_user and t.owner_id == current_user.id %}<span class="tag tag-blue">yours</span>{% endif %}
+                {% if t.owner_is_demo %}<span class="tag" title="Example listing to show how toolshare works">sample</span>{% endif %}
             </div>
         </div>
         <div class="result-price">{{ t.daily_price | money }}<span>/day</span></div>

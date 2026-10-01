@@ -1,32 +1,67 @@
 from flask import (Flask, render_template, request, jsonify, session, redirect, url_for,
-                   flash, g, send_from_directory, abort)
+                   flash, g, send_from_directory, abort, Response)
+from markupsafe import Markup
+from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import generate_password_hash, check_password_hash
 import os
+import re
 import hmac
 import json
+import time
 import uuid
-from datetime import date, datetime
+import sqlite3
+import secrets
+import hashlib
+import mimetypes
+import functools
+import tempfile
+from datetime import date, datetime, timedelta
 import db_builder
 import listing_utils
+import metrics
+import storage
+from telemetry import track
 from evals import runner as eval_runner
 from evals.scoring import summarize as summarize_eval
 
+DEV_SECRET = 'dev-secret-key-change-in-production'
+ON_AZURE = bool(os.getenv('WEBSITE_SITE_NAME'))   # set by App Service
+
 app = Flask(__name__)
-app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['DB_PATH'] = db_builder.get_db_path()
-app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', os.path.join('instance', 'uploads'))
-app.config['MAX_CONTENT_LENGTH'] = 15 * 1024 * 1024   # per request; photos upload one at a time
+# App Service terminates HTTPS in front of the app; trust its forwarded scheme and client address
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+app.secret_key = os.getenv('FLASK_SECRET_KEY', DEV_SECRET)
+app.config.update(
+    DB_PATH=db_builder.get_db_path(),
+    UPLOAD_FOLDER=os.getenv('UPLOAD_FOLDER', os.path.join('instance', 'uploads')),
+    BACKUP_FOLDER=os.getenv('BACKUP_FOLDER', os.path.join('instance', 'backups')),
+    MAX_CONTENT_LENGTH=15 * 1024 * 1024,     # per request; photos upload one at a time
+    SESSION_COOKIE_SECURE=ON_AZURE,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    CSRF_ENABLED=True,
+    UPLOAD_DAILY_LIMIT=int(os.getenv('UPLOAD_DAILY_LIMIT', '150')),   # photos + video frames per user per 24h
+    SHOW_DEMO_LISTINGS=os.getenv('SHOW_DEMO_LISTINGS', '1') == '1',
+)
+if ON_AZURE and app.secret_key == DEV_SECRET:
+    raise RuntimeError('Set FLASK_SECRET_KEY in the App Service settings')
 
 ALLOWED_IMAGE_TYPES = {
     'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
     'webp': 'image/webp', 'gif': 'image/gif',
 }
+AVATAR_MAX_BYTES = 5 * 1024 * 1024
+EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+MIN_PASSWORD = 8
+ADMIN_SESSION_SECONDS = 12 * 3600
 
 # Databases that already have their schema, keyed by path
 _initialized_dbs = set()
 
 
 def get_db():
-    """Per-request SQLite connection; creates and seeds the database on first use"""
+    """Per-request SQLite connection; creates, seeds and migrates the database on first use"""
     if 'db' not in g:
         path = app.config['DB_PATH']
         g.db = db_builder.get_connection(path)
@@ -43,21 +78,143 @@ def close_db(exc):
         conn.close()
 
 
-def get_current_user():
-    """Demo auth: the session picks which seeded neighbor you are acting as"""
-    db = get_db()
-    user = None
-    if 'user_id' in session:
-        user = db.execute('SELECT * FROM users WHERE id = ?', (session['user_id'],)).fetchone()
-    if user is None:
-        # Default to the demo renter (last seeded user)
-        user = db.execute('SELECT * FROM users ORDER BY id DESC LIMIT 1').fetchone()
-        session['user_id'] = user['id']
-    return user
+def media_store():
+    return storage.get_store(storage.MEDIA_CONTAINER, app.config['UPLOAD_FOLDER'])
 
+
+def backup_store():
+    return storage.get_store(storage.BACKUP_CONTAINER, app.config['BACKUP_FOLDER'])
+
+
+# ---------------------------------------------------------------------------
+# Sessions, CSRF, rate limiting, telemetry hooks
+# ---------------------------------------------------------------------------
+
+def csrf_token():
+    if 'csrf' not in session:
+        session['csrf'] = secrets.token_urlsafe(32)
+    return session['csrf']
+
+
+def csrf_field():
+    return Markup(f'<input type="hidden" name="_csrf" value="{csrf_token()}">')
+
+
+# In-memory failed-attempt counter. The app runs one worker process, so this is shared by all requests.
+_failures = {}
+
+
+def too_many_failures(key, limit, window=900):
+    now = time.time()
+    recent = [t for t in _failures.get(key, []) if now - t < window]
+    _failures[key] = recent
+    return len(recent) >= limit
+
+
+def record_failure(key):
+    _failures.setdefault(key, []).append(time.time())
+
+
+def client_ip():
+    return request.remote_addr or 'unknown'
+
+
+def visitor_id():
+    return session.get('vid')
+
+
+@app.before_request
+def before_request():
+    if request.endpoint == 'static':
+        return
+    g.user = None
+    uid = session.get('user_id')
+    if uid:
+        g.user = get_db().execute(
+            'SELECT * FROM users WHERE id = ? AND is_demo = 0 AND password_hash IS NOT NULL', (uid,)
+        ).fetchone()
+        if g.user is None:
+            session.pop('user_id', None)
+    if 'vid' not in session:
+        session['vid'] = uuid.uuid4().hex
+
+    if request.method == 'POST' and app.config['CSRF_ENABLED']:
+        sent = request.form.get('_csrf') or request.headers.get('X-CSRF-Token') or ''
+        if not session.get('csrf') or not hmac.compare_digest(sent, session['csrf']):
+            if request.path.startswith('/api/'):
+                return jsonify({'success': False, 'error': 'Your session expired. Reload the page and try again.'}), 400
+            flash('Your session expired. Please try again.', 'error')
+            return redirect(request.referrer or url_for('browse'))
+
+
+@app.after_request
+def after_request(response):
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'DENY')
+    response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    if ON_AZURE:
+        response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000')
+    if (request.method == 'GET' and response.status_code == 200 and response.mimetype == 'text/html'
+            and request.endpoint not in (None, 'static')):
+        db = get_db()
+        track(db, 'page_view', user_id=g.user['id'] if g.get('user') else None,
+              visitor=visitor_id(), path=request.endpoint)
+        db.commit()
+    return response
+
+
+def safe_next(target):
+    """Only allow redirects back into this site"""
+    if target and target.startswith('/') and not target.startswith('//'):
+        return target
+    return url_for('browse')
+
+
+def login_required(view):
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        if g.user is None:
+            if request.path.startswith('/api/'):
+                return jsonify({'success': False, 'error': 'Please log in first'}), 401
+            flash('Log in or create an account to continue.', 'error')
+            return redirect(url_for('login', next=request.full_path if request.query_string else request.path))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def is_admin():
+    return session.get('admin_until', 0) > time.time()
+
+
+def admin_required(view):
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        if not is_admin():
+            return redirect(url_for('admin_login', next=request.path))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def log_in(user):
+    session.clear()
+    session.permanent = True
+    session['user_id'] = user['id']
+    session['vid'] = uuid.uuid4().hex
+
+
+# ---------------------------------------------------------------------------
+# Template helpers
+# ---------------------------------------------------------------------------
 
 def user_platforms(user):
-    return [p for p in user['battery_platforms'].split(',') if p]
+    return [p for p in (user['battery_platforms'] if user else '').split(',') if p]
+
+
+def viewer_location():
+    """Logged-in users measure distance from their own location; visitors from the service area center"""
+    if g.get('user'):
+        return g.user['lat'], g.user['lng']
+    return db_builder.DEMO_CENTER
 
 
 @app.template_filter('money')
@@ -67,17 +224,28 @@ def money_filter(amount):
     return f'${amount:.0f}' if amount == int(amount) else f'${amount:.2f}'
 
 
+@app.template_filter('initials')
+def initials_filter(name):
+    parts = [p for p in re.split(r'\s+', (name or '').strip()) if p and p[0].isalnum()]
+    return ''.join(p[0] for p in parts[:2]).upper() or '?'
+
+
 @app.context_processor
 def inject_globals():
-    user = get_current_user()
-    db = get_db()
+    user = g.get('user')
+    draft_count = 0
+    if user:
+        draft_count = get_db().execute(
+            "SELECT COUNT(*) FROM tools WHERE owner_id = ? AND status = 'draft'", (user['id'],)
+        ).fetchone()[0]
     return {
         'current_user': user,
-        'all_users': db.execute('SELECT id, name FROM users ORDER BY id').fetchall(),
-        'draft_count': db.execute(
-            "SELECT COUNT(*) FROM tools WHERE owner_id = ? AND status = 'draft'", (user['id'],)
-        ).fetchone()[0],
+        'draft_count': draft_count,
         'ai_live': listing_utils.ai_is_configured(),
+        'csrf_token': csrf_token,
+        'csrf_field': csrf_field,
+        'is_admin': is_admin(),
+        'area_name': os.getenv('SERVICE_AREA_NAME', 'denver'),
     }
 
 
@@ -90,11 +258,12 @@ def parse_date(value):
 
 def get_listed_tool(tool_id):
     tool = get_db().execute(
-        '''SELECT t.*, u.name AS owner_name, u.neighborhood, u.lat, u.lng
+        '''SELECT t.*, u.name AS owner_name, u.neighborhood, u.lat, u.lng, u.avatar_path AS owner_avatar,
+                  u.is_demo AS owner_is_demo, u.created_at AS owner_since
            FROM tools t JOIN users u ON t.owner_id = u.id
            WHERE t.id = ? AND t.status = 'listed' ''', (tool_id,)
     ).fetchone()
-    if tool is None:
+    if tool is None or (tool['owner_is_demo'] and not app.config['SHOW_DEMO_LISTINGS']):
         abort(404)
     return tool
 
@@ -110,8 +279,9 @@ def has_overlap(tool_id, start, end, exclude_booking_id=None):
     return row[0] > 0
 
 
-def build_quote(tool, renter, start, end, delivery, hour):
-    miles = listing_utils.distance_miles(renter['lat'], renter['lng'], tool['lat'], tool['lng'])
+def build_quote(tool, start, end, delivery, hour):
+    lat, lng = viewer_location()
+    miles = listing_utils.distance_miles(lat, lng, tool['lat'], tool['lng'])
     days = listing_utils.rental_days(start, end)
     result = listing_utils.quote(tool['daily_price'], tool['deposit'], days,
                                  delivery=delivery, miles=miles, hour=hour)
@@ -121,13 +291,221 @@ def build_quote(tool, renter, start, end, delivery, hour):
 
 
 # ---------------------------------------------------------------------------
+# Accounts
+# ---------------------------------------------------------------------------
+
+def parse_location(form):
+    """Browser geolocation fills lat/lng; rounded to ~100 m so exact addresses aren't stored"""
+    try:
+        lat, lng = float(form.get('lat', '')), float(form.get('lng', ''))
+        if -90 <= lat <= 90 and -180 <= lng <= 180:
+            return round(lat, 3), round(lng, 3)
+    except ValueError:
+        pass
+    return None
+
+
+def selected_platforms(form):
+    return ','.join(p for p in form.getlist('battery_platforms') if p in listing_utils.BATTERY_PLATFORMS)
+
+
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if g.user:
+        return redirect(url_for('browse'))
+    form = request.form
+    if request.method == 'POST':
+        name = form.get('name', '').strip()[:60]
+        email = form.get('email', '').strip().lower()[:254]
+        password = form.get('password', '')
+        neighborhood = form.get('neighborhood', '').strip()[:60]
+        errors = []
+        if not name:
+            errors.append('Enter your name.')
+        if not EMAIL_RE.match(email):
+            errors.append('Enter a valid email address.')
+        if len(password) < MIN_PASSWORD:
+            errors.append(f'Use a password of at least {MIN_PASSWORD} characters.')
+        if not neighborhood:
+            errors.append('Enter your neighborhood so renters know roughly where tools are.')
+        db = get_db()
+        if not errors and db.execute('SELECT 1 FROM users WHERE email = ? COLLATE NOCASE', (email,)).fetchone():
+            errors.append('An account with that email already exists. Try logging in.')
+        if errors:
+            for e in errors:
+                flash(e, 'error')
+            return render_template('signup.html', form=form, platforms=listing_utils.BATTERY_PLATFORMS), 400
+
+        lat, lng = parse_location(form) or db_builder.DEMO_CENTER
+        now = datetime.now().isoformat(timespec='seconds')
+        try:
+            cur = db.execute(
+                '''INSERT INTO users (name, email, password_hash, neighborhood, lat, lng, battery_platforms,
+                                      is_demo, created_at, last_login_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)''',
+                (name, email, generate_password_hash(password), neighborhood, lat, lng,
+                 selected_platforms(form), now, now))
+        except sqlite3.IntegrityError:
+            flash('An account with that email already exists. Try logging in.', 'error')
+            return render_template('signup.html', form=form, platforms=listing_utils.BATTERY_PLATFORMS), 400
+        user = db.execute('SELECT * FROM users WHERE id = ?', (cur.lastrowid,)).fetchone()
+        track(db, 'signup', user_id=user['id'], visitor=visitor_id(), located=parse_location(form) is not None)
+        db.commit()
+        log_in(user)
+        flash(f'Welcome, {name}! Post your tools or browse what neighbors have.', 'success')
+        return redirect(safe_next(request.args.get('next')))
+    return render_template('signup.html', form=form, platforms=listing_utils.BATTERY_PLATFORMS)
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if g.user:
+        return redirect(url_for('browse'))
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+        ip_key, email_key = f'login-ip:{client_ip()}', f'login-email:{email}'
+        if too_many_failures(ip_key, 20) or too_many_failures(email_key, 8):
+            flash('Too many attempts. Wait 15 minutes and try again.', 'error')
+            return render_template('login.html', email=email), 429
+        db = get_db()
+        user = db.execute(
+            'SELECT * FROM users WHERE email = ? COLLATE NOCASE AND is_demo = 0', (email,)
+        ).fetchone()
+        if user is None or not user['password_hash'] or not check_password_hash(user['password_hash'],
+                                                                                request.form.get('password', '')):
+            record_failure(ip_key)
+            record_failure(email_key)
+            track(db, 'login_failed', visitor=visitor_id())
+            db.commit()
+            flash('That email and password don\'t match.', 'error')
+            return render_template('login.html', email=email), 401
+        db.execute('UPDATE users SET last_login_at = ? WHERE id = ?',
+                   (datetime.now().isoformat(timespec='seconds'), user['id']))
+        track(db, 'login', user_id=user['id'], visitor=visitor_id())
+        db.commit()
+        log_in(user)
+        return redirect(safe_next(request.args.get('next')))
+    return render_template('login.html', email='')
+
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    if g.user:
+        track(get_db(), 'logout', user_id=g.user['id'], visitor=visitor_id())
+        get_db().commit()
+    session.clear()
+    flash('You\'re logged out.', 'success')
+    return redirect(url_for('browse'))
+
+
+@app.route('/account', methods=['GET', 'POST'])
+@login_required
+def account():
+    db = get_db()
+    if request.method == 'POST':
+        form = request.form
+        name = form.get('name', '').strip()[:60]
+        email = form.get('email', '').strip().lower()[:254]
+        neighborhood = form.get('neighborhood', '').strip()[:60]
+        bio = form.get('bio', '').strip()[:500]
+        errors = []
+        if not name:
+            errors.append('Enter your name.')
+        if not neighborhood:
+            errors.append('Enter your neighborhood.')
+        if not EMAIL_RE.match(email):
+            errors.append('Enter a valid email address.')
+        elif db.execute('SELECT 1 FROM users WHERE email = ? COLLATE NOCASE AND id != ?', (email, g.user['id'])).fetchone():
+            errors.append('Another account already uses that email.')
+        if errors:
+            for e in errors:
+                flash(e, 'error')
+            return redirect(url_for('account'))
+        lat, lng = parse_location(form) or (g.user['lat'], g.user['lng'])
+        db.execute('''UPDATE users SET name = ?, email = ?, neighborhood = ?, bio = ?, battery_platforms = ?,
+                                       lat = ?, lng = ? WHERE id = ?''',
+                   (name, email, neighborhood, bio, selected_platforms(form), lat, lng, g.user['id']))
+        track(db, 'profile_updated', user_id=g.user['id'], located=parse_location(form) is not None)
+        db.commit()
+        flash('Profile saved.', 'success')
+        return redirect(url_for('account'))
+    listings = db.execute("SELECT COUNT(*) FROM tools WHERE owner_id = ? AND status = 'listed'", (g.user['id'],)).fetchone()[0]
+    return render_template('account.html', platforms=listing_utils.BATTERY_PLATFORMS,
+                           my_platforms=user_platforms(g.user), listings=listings, min_password=MIN_PASSWORD)
+
+
+@app.route('/account/avatar', methods=['POST'])
+@login_required
+def account_avatar():
+    photo = request.files.get('avatar')
+    ext = (photo.filename.rsplit('.', 1)[-1].lower() if photo and '.' in photo.filename else '')
+    if ext not in ALLOWED_IMAGE_TYPES:
+        flash('Choose a JPG, PNG, WEBP or GIF image.', 'error')
+        return redirect(url_for('account'))
+    data = photo.read()
+    if not data or len(data) > AVATAR_MAX_BYTES:
+        flash('Profile photos must be under 5 MB.', 'error')
+        return redirect(url_for('account'))
+    db = get_db()
+    old = g.user['avatar_path']
+    try:
+        key = media_store().put(storage.new_key('avatars', ext), data, ALLOWED_IMAGE_TYPES[ext])
+    except Exception as e:
+        print(f'Avatar upload failed: {e}')
+        flash('Couldn\'t save that photo. Please try again.', 'error')
+        return redirect(url_for('account'))
+    db.execute('UPDATE users SET avatar_path = ? WHERE id = ?', (key, g.user['id']))
+    track(db, 'avatar_uploaded', user_id=g.user['id'], value=len(data))
+    db.commit()
+    if old and '/' in old:
+        media_store().delete(old)
+    flash('Profile photo updated.', 'success')
+    return redirect(url_for('account'))
+
+
+@app.route('/account/password', methods=['POST'])
+@login_required
+def account_password():
+    current, new = request.form.get('current_password', ''), request.form.get('new_password', '')
+    if not check_password_hash(g.user['password_hash'], current):
+        flash('Your current password isn\'t right.', 'error')
+    elif len(new) < MIN_PASSWORD:
+        flash(f'Use a new password of at least {MIN_PASSWORD} characters.', 'error')
+    else:
+        db = get_db()
+        db.execute('UPDATE users SET password_hash = ? WHERE id = ?', (generate_password_hash(new), g.user['id']))
+        track(db, 'password_changed', user_id=g.user['id'])
+        db.commit()
+        flash('Password changed.', 'success')
+    return redirect(url_for('account'))
+
+
+@app.route('/u/<int:user_id>')
+def profile(user_id):
+    db = get_db()
+    person = db.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
+    if person is None or (person['is_demo'] and not app.config['SHOW_DEMO_LISTINGS']):
+        abort(404)
+    tools = db.execute(
+        "SELECT * FROM tools WHERE owner_id = ? AND status = 'listed' ORDER BY published_at DESC, id DESC", (user_id,)
+    ).fetchall()
+    lat, lng = viewer_location()
+    miles = round(listing_utils.distance_miles(lat, lng, person['lat'], person['lng']), 1)
+    completed = db.execute(
+        """SELECT COUNT(*) FROM bookings b JOIN tools t ON b.tool_id = t.id
+           WHERE t.owner_id = ? AND b.status = 'returned'""", (user_id,)
+    ).fetchone()[0]
+    return render_template('profile.html', person=person, tools=tools, miles=miles, completed=completed,
+                           platforms=user_platforms(person))
+
+
+# ---------------------------------------------------------------------------
 # Browse and rent
 # ---------------------------------------------------------------------------
 
 @app.route('/')
 def browse():
-    """Browse listed tools near the current user"""
-    user = get_current_user()
+    """Browse listed tools near the viewer"""
     q = request.args.get('q', '').strip()
     category = request.args.get('category', '')
     platform = request.args.get('platform', '')
@@ -137,10 +515,12 @@ def browse():
     except ValueError:
         max_miles = 10.0
 
-    sql = '''SELECT t.*, u.name AS owner_name, u.neighborhood, u.lat, u.lng
+    sql = '''SELECT t.*, u.name AS owner_name, u.neighborhood, u.lat, u.lng, u.is_demo AS owner_is_demo
              FROM tools t JOIN users u ON t.owner_id = u.id
              WHERE t.status = 'listed' '''
     params = []
+    if not app.config['SHOW_DEMO_LISTINGS']:
+        sql += ' AND u.is_demo = 0'
     if q:
         sql += ' AND (t.name LIKE ? OR t.brand LIKE ? OR t.model LIKE ? OR t.description LIKE ?)'
         params += [f'%{q}%'] * 4
@@ -148,9 +528,10 @@ def browse():
         sql += ' AND t.category = ?'
         params.append(category)
 
+    my_platforms = user_platforms(g.user)
     platforms = []
     if platform == 'mine':
-        platforms = user_platforms(user)
+        platforms = my_platforms
     elif platform in listing_utils.BATTERY_PLATFORMS:
         platforms = [platform]
     if platform:
@@ -158,24 +539,24 @@ def browse():
         sql += f" AND t.battery_platform IN ({','.join('?' for _ in platforms) or 'NULL'})"
         params += platforms
 
+    lat, lng = viewer_location()
     tools = []
     for row in get_db().execute(sql, params).fetchall():
-        miles = listing_utils.distance_miles(user['lat'], user['lng'], row['lat'], row['lng'])
+        miles = listing_utils.distance_miles(lat, lng, row['lat'], row['lng'])
         if miles <= max_miles:
             tools.append({**dict(row), 'miles': round(miles, 1)})
-    tools.sort(key=lambda t: t['miles'])
+    tools.sort(key=lambda t: (t['owner_is_demo'], t['miles']))   # real listings before samples
 
     return render_template('browse.html', tools=tools, q=q, category=category, platform=platform,
                            max_miles=max_miles, view=view, categories=listing_utils.CATEGORIES,
-                           platforms=listing_utils.BATTERY_PLATFORMS,
-                           my_platforms=user_platforms(user))
+                           platforms=listing_utils.BATTERY_PLATFORMS, my_platforms=my_platforms)
 
 
 @app.route('/tool/<int:tool_id>')
 def tool_detail(tool_id):
-    user = get_current_user()
     tool = get_listed_tool(tool_id)
-    miles = listing_utils.distance_miles(user['lat'], user['lng'], tool['lat'], tool['lng'])
+    lat, lng = viewer_location()
+    miles = listing_utils.distance_miles(lat, lng, tool['lat'], tool['lng'])
     booked = get_db().execute(
         '''SELECT start_date, end_date FROM bookings
            WHERE tool_id = ? AND status = 'accepted' AND end_date >= ? ORDER BY start_date''',
@@ -192,14 +573,13 @@ def tool_detail(tool_id):
         ).fetchall()
     return render_template('tool.html', tool=tool, miles=round(miles, 1), booked=booked, addons=addons,
                            today=date.today().isoformat(),
-                           fits_my_batteries=tool['battery_platform'] in user_platforms(user),
+                           fits_my_batteries=tool['battery_platform'] in user_platforms(g.user),
                            delivery_max=listing_utils.DELIVERY_MAX_MILES)
 
 
 @app.route('/api/quote')
 def api_quote():
     """Live price quote for the booking form"""
-    user = get_current_user()
     tool = get_listed_tool(request.args.get('tool_id', type=int))
     start = parse_date(request.args.get('start'))
     end = parse_date(request.args.get('end'))
@@ -207,17 +587,20 @@ def api_quote():
         return jsonify({'success': False, 'error': 'Pick a valid start and return date'}), 400
     delivery = request.args.get('delivery') == '1'
     hour = request.args.get('hour', 10, type=int) % 24
-    result = build_quote(tool, user, start, end, delivery, hour)
-    return jsonify({'success': True, **result})
+    return jsonify({'success': True, **build_quote(tool, start, end, delivery, hour)})
 
 
 @app.route('/tool/<int:tool_id>/book', methods=['POST'])
+@login_required
 def book_tool(tool_id):
-    user = get_current_user()
+    user = g.user
     tool = get_listed_tool(tool_id)
 
     if tool['owner_id'] == user['id']:
-        flash("That's your own tool. Switch users to test renting it.", 'error')
+        flash("That's your own tool.", 'error')
+        return redirect(url_for('tool_detail', tool_id=tool_id))
+    if tool['owner_is_demo']:
+        flash('This is a sample listing, so it can\'t be rented.', 'error')
         return redirect(url_for('tool_detail', tool_id=tool_id))
 
     start = parse_date(request.form.get('start'))
@@ -236,12 +619,13 @@ def book_tool(tool_id):
 
     delivery = request.form.get('delivery') == '1'
     hour = request.form.get('hour', 10, type=int) % 24
-    q = build_quote(tool, user, start, end, delivery, hour)
+    q = build_quote(tool, start, end, delivery, hour)
     if delivery and not q['delivery_available']:
         flash(f"Delivery is only offered within {listing_utils.DELIVERY_MAX_MILES} miles.", 'error')
         return redirect(url_for('tool_detail', tool_id=tool_id))
 
-    get_db().execute(
+    db = get_db()
+    db.execute(
         '''INSERT INTO bookings (tool_id, renter_id, start_date, end_date, days, rental_total, service_fee,
                                  delivery, delivery_fee, deposit, total_charge, owner_payout, message,
                                  status, created_at)
@@ -251,7 +635,9 @@ def book_tool(tool_id):
          q['owner_payout'], request.form.get('message', '').strip()[:500],
          datetime.now().isoformat(timespec='seconds'))
     )
-    get_db().commit()
+    track(db, 'booking_requested', user_id=user['id'], value=q['total_charge'], tool_id=tool_id,
+          days=q['days'], delivery=delivery)
+    db.commit()
     flash(f"Request sent to {tool['owner_name']}. You'll see it under My Garage.", 'success')
     return redirect(url_for('garage'))
 
@@ -261,15 +647,30 @@ def book_tool(tool_id):
 # ---------------------------------------------------------------------------
 
 @app.route('/list')
+@login_required
 def list_tools():
     """Upload garage photos to get AI-drafted listings"""
     return render_template('list.html')
 
 
+def uploads_today(user_id):
+    since = (datetime.now() - timedelta(days=1)).isoformat(timespec='seconds')
+    return get_db().execute(
+        "SELECT COUNT(*) FROM events WHERE event = 'photo_analyzed' AND user_id = ? AND ts >= ?", (user_id, since)
+    ).fetchone()[0]
+
+
 @app.route('/api/analyze-photo', methods=['POST'])
+@login_required
 def analyze_photo():
     """Analyze one photo and save a draft listing for each tool found"""
-    user = get_current_user()
+    user = g.user
+    db = get_db()
+    if uploads_today(user['id']) >= app.config['UPLOAD_DAILY_LIMIT']:
+        track(db, 'upload_limited', user_id=user['id'])
+        db.commit()
+        return jsonify({'success': False, 'error': 'You\'ve hit today\'s photo limit. Try again tomorrow.'}), 429
+
     photo = request.files.get('photo')
     if photo is None or not photo.filename:
         return jsonify({'success': False, 'error': 'No photo uploaded'}), 400
@@ -283,16 +684,16 @@ def analyze_photo():
     if not image_bytes:
         return jsonify({'success': False, 'error': 'Photo is empty'}), 400
 
+    source = 'video' if request.form.get('source') == 'video' else 'photo'
+    started = time.monotonic()
     try:
-        source = 'video' if request.form.get('source') == 'video' else 'photo'
         drafts, cost, demo_mode, model_used = listing_utils.analyze_photo(
             image_bytes, ALLOWED_IMAGE_TYPES[ext], source=source)
     except Exception as e:
         print(f"Error analyzing photo: {e}")
         return jsonify({'success': False, 'error': f'Could not analyze photo: {e}'}), 502
+    seconds = round(time.monotonic() - started, 2)
 
-    filename = f'{uuid.uuid4().hex}.{ext}'
-    db = get_db()
     # Frames from one video walkthrough share a batch id; skip tools already drafted from an earlier frame
     batch_id = request.form.get('batch_id', '').strip()[:64] or None
     seen = set()
@@ -301,22 +702,26 @@ def analyze_photo():
             "SELECT name, brand, model FROM tools WHERE owner_id = ? AND batch_id = ? AND status = 'draft'",
             (user['id'], batch_id)
         ).fetchall()}
-
     created = []
     for draft in drafts:
         key = listing_utils.draft_key(draft)
-        if key in seen:
-            continue
-        seen.add(key)
-        db_builder.insert_tool(db, owner_id=user['id'], status='draft', photo_path=filename,
-                               batch_id=batch_id, **draft)
-        created.append(draft)
+        if key not in seen:
+            seen.add(key)
+            created.append(draft)
 
     # Keep the photo only if it produced a listing (it becomes the listing photo)
+    photo_key = None
     if created:
-        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-        with open(os.path.join(app.config['UPLOAD_FOLDER'], filename), 'wb') as f:
-            f.write(image_bytes)
+        try:
+            photo_key = media_store().put(storage.new_key('listings', ext), image_bytes, ALLOWED_IMAGE_TYPES[ext])
+        except Exception as e:
+            print(f'Photo storage failed: {e}')
+            return jsonify({'success': False, 'error': 'Couldn\'t save the photo. Please try again.'}), 502
+    for draft in created:
+        db_builder.insert_tool(db, owner_id=user['id'], status='draft', photo_path=photo_key,
+                               batch_id=batch_id, **draft)
+    track(db, 'photo_analyzed', user_id=user['id'], value=round(cost, 5), duration=seconds,
+          source=source, model=model_used, drafts=len(created), duplicates=len(drafts) - len(created), demo=demo_mode)
     db.commit()
 
     return jsonify({
@@ -331,9 +736,10 @@ def analyze_photo():
 
 
 @app.route('/list/review', methods=['GET', 'POST'])
+@login_required
 def review_drafts():
     """Bulk approve, edit or skip AI drafts"""
-    user = get_current_user()
+    user = g.user
     db = get_db()
     drafts = db.execute(
         "SELECT * FROM tools WHERE owner_id = ? AND status = 'draft' ORDER BY id", (user['id'],)
@@ -341,6 +747,7 @@ def review_drafts():
 
     if request.method == 'POST':
         listed = skipped = blocked = 0
+        now = datetime.now().isoformat(timespec='seconds')
         for draft in drafts:
             action = request.form.get(f'action_{draft["id"]}', 'keep')
             if action == 'skip':
@@ -360,8 +767,9 @@ def review_drafts():
                 else:
                     listed += 1
                 sets = ', '.join(f'{k} = ?' for k in clean)
-                db.execute(f'UPDATE tools SET {sets}, status = ? WHERE id = ?',
-                           list(clean.values()) + [status, draft['id']])
+                db.execute(f'UPDATE tools SET {sets}, status = ?, published_at = ? WHERE id = ?',
+                           list(clean.values()) + [status, now if status == 'listed' else None, draft['id']])
+        track(db, 'drafts_reviewed', user_id=user['id'], listed=listed, skipped=skipped, blocked=blocked)
         db.commit()
         msg = f'Listed {listed} tool{"s" if listed != 1 else ""}, skipped {skipped}.'
         if blocked:
@@ -376,7 +784,19 @@ def review_drafts():
 
 @app.route('/uploads/<path:filename>')
 def uploaded_file(filename):
-    return send_from_directory(os.path.abspath(app.config['UPLOAD_FOLDER']), filename)
+    """Serve listing and profile photos from storage. Keys are unique, so browsers can cache them for good."""
+    if '..' in filename:
+        abort(404)
+    found = media_store().get(filename)
+    if found is None:
+        # Photos uploaded before Blob Storage was set up still live on local disk
+        legacy = os.path.abspath(app.config['UPLOAD_FOLDER'])
+        if os.path.isfile(os.path.join(legacy, filename)):
+            return send_from_directory(legacy, filename, max_age=31536000)
+        abort(404)
+    data, content_type = found
+    content_type = content_type or mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+    return Response(data, mimetype=content_type, headers={'Cache-Control': 'public, max-age=31536000, immutable'})
 
 
 # ---------------------------------------------------------------------------
@@ -384,19 +804,20 @@ def uploaded_file(filename):
 # ---------------------------------------------------------------------------
 
 @app.route('/garage')
+@login_required
 def garage():
-    user = get_current_user()
+    user = g.user
     db = get_db()
     listings = db.execute(
         "SELECT * FROM tools WHERE owner_id = ? AND status = 'listed' ORDER BY category, name", (user['id'],)
     ).fetchall()
     incoming = db.execute(
-        '''SELECT b.*, t.name AS tool_name, u.name AS renter_name
+        '''SELECT b.*, t.name AS tool_name, u.name AS renter_name, u.id AS renter_user_id
            FROM bookings b JOIN tools t ON b.tool_id = t.id JOIN users u ON b.renter_id = u.id
            WHERE t.owner_id = ? ORDER BY b.created_at DESC''', (user['id'],)
     ).fetchall()
     rentals = db.execute(
-        '''SELECT b.*, t.name AS tool_name, u.name AS owner_name
+        '''SELECT b.*, t.name AS tool_name, u.name AS owner_name, u.id AS owner_user_id
            FROM bookings b JOIN tools t ON b.tool_id = t.id JOIN users u ON t.owner_id = u.id
            WHERE b.renter_id = ? ORDER BY b.created_at DESC''', (user['id'],)
     ).fetchall()
@@ -415,10 +836,11 @@ BOOKING_ACTIONS = {
 
 
 @app.route('/booking/<int:booking_id>/<action>', methods=['POST'])
+@login_required
 def update_booking(booking_id, action):
     if action not in BOOKING_ACTIONS:
         abort(404)
-    user = get_current_user()
+    user = g.user
     db = get_db()
     booking = db.execute(
         '''SELECT b.*, t.owner_id FROM bookings b JOIN tools t ON b.tool_id = t.id WHERE b.id = ?''',
@@ -440,21 +862,177 @@ def update_booking(booking_id, action):
         return redirect(url_for('garage'))
 
     db.execute('UPDATE bookings SET status = ? WHERE id = ?', (new_status, booking_id))
+    track(db, f'booking_{new_status}', user_id=user['id'], value=booking['total_charge'], booking_id=booking_id)
     db.commit()
     flash(f'Booking {new_status}.', 'success')
     return redirect(url_for('garage'))
 
 
 @app.route('/tool/<int:tool_id>/unlist', methods=['POST'])
+@login_required
 def unlist_tool(tool_id):
-    user = get_current_user()
     db = get_db()
-    cur = db.execute("UPDATE tools SET status = 'skipped' WHERE id = ? AND owner_id = ?", (tool_id, user['id']))
-    db.commit()
+    cur = db.execute("UPDATE tools SET status = 'skipped' WHERE id = ? AND owner_id = ?", (tool_id, g.user['id']))
     if cur.rowcount == 0:
         abort(404)
+    track(db, 'listing_removed', user_id=g.user['id'], tool_id=tool_id)
+    db.commit()
     flash('Listing removed.', 'success')
     return redirect(url_for('garage'))
+
+
+# ---------------------------------------------------------------------------
+# Admin: password-protected metrics, backups and account help
+# ---------------------------------------------------------------------------
+
+def admin_password_ok(candidate):
+    expected = os.getenv('ADMIN_PASSWORD', '')
+    if not expected:
+        return False
+    # Compare fixed-length digests so timing doesn't reveal the password length
+    return hmac.compare_digest(hashlib.sha256(candidate.encode()).digest(), hashlib.sha256(expected.encode()).digest())
+
+
+@app.route('/admin/login', methods=['GET', 'POST'])
+def admin_login():
+    enabled = bool(os.getenv('ADMIN_PASSWORD'))
+    if request.method == 'POST' and enabled:
+        key = f'admin-ip:{client_ip()}'
+        db = get_db()
+        if too_many_failures(key, 5):
+            flash('Too many attempts. Wait 15 minutes and try again.', 'error')
+            return render_template('admin_login.html', enabled=enabled), 429
+        if admin_password_ok(request.form.get('password', '')):
+            session['admin_until'] = time.time() + ADMIN_SESSION_SECONDS
+            track(db, 'admin_login', user_id=g.user['id'] if g.user else None)
+            db.commit()
+            return redirect(safe_next(request.args.get('next')) if request.args.get('next') else url_for('admin'))
+        record_failure(key)
+        track(db, 'admin_login_failed')
+        db.commit()
+        flash('Wrong admin password.', 'error')
+        return render_template('admin_login.html', enabled=enabled), 401
+    return render_template('admin_login.html', enabled=enabled)
+
+
+@app.route('/admin/logout', methods=['POST'])
+def admin_logout():
+    session.pop('admin_until', None)
+    flash('Signed out of admin.', 'success')
+    return redirect(url_for('browse'))
+
+
+@app.route('/admin')
+@admin_required
+def admin():
+    db = get_db()
+    data = metrics.collect(db)
+    try:
+        backups = backup_store().list('db/')[:10]
+        backup_error = None
+    except Exception as e:
+        backups, backup_error = [], str(e)[:200]
+    legacy_photos = db.execute(
+        """SELECT COUNT(*) FROM (SELECT photo_path AS p FROM tools WHERE photo_path IS NOT NULL AND photo_path NOT LIKE '%/%'
+                                 UNION SELECT avatar_path FROM users WHERE avatar_path IS NOT NULL AND avatar_path NOT LIKE '%/%')"""
+    ).fetchone()[0]
+    charts = [(title, metrics.column_chart(data['daily'][key], money=money), note) for title, key, money, note in (
+        ('posts', 'posts', False, 'listings published per day'),
+        ('signups', 'signups', False, 'new accounts per day'),
+        ('rental requests', 'bookings', False, 'booking requests per day'),
+        ('page views', 'page_views', False, 'pages viewed per day'),
+        ('AI spend', 'ai_cost', True, 'estimated model cost per day (uploads + test bench)'),
+    )]
+    return render_template('admin.html', m=data, charts=charts, backups=backups, backup_error=backup_error,
+                           media=media_store().describe(), blob=storage.blob_configured(),
+                           legacy_photos=legacy_photos, eval_key=os.getenv('EVAL_KEY', ''),
+                           models={'photo': listing_utils.PHOTO_TIER, 'video': listing_utils.VIDEO_TIER,
+                                   'luna': listing_utils.DEPLOYMENT_LUNA, 'terra': listing_utils.DEPLOYMENT_TERRA,
+                                   'sol': listing_utils.DEPLOYMENT_SOL},
+                           upload_limit=app.config['UPLOAD_DAILY_LIMIT'])
+
+
+@app.route('/admin/backup', methods=['POST'])
+@admin_required
+def admin_backup():
+    """Copy the live SQLite database (consistent snapshot) to the backup container"""
+    db = get_db()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, 'snapshot.db')
+        dest = sqlite3.connect(path)
+        db.backup(dest)
+        dest.close()
+        with open(path, 'rb') as f:
+            data = f.read()
+    key = f"db/tools-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
+    try:
+        backup_store().put(key, data, 'application/vnd.sqlite3')
+    except Exception as e:
+        flash(f'Backup failed: {e}', 'error')
+        return redirect(url_for('admin'))
+    track(db, 'backup_created', value=len(data), key=key)
+    db.commit()
+    flash(f'Backed up the database ({len(data) // 1024} KB) to {key}.', 'success')
+    return redirect(url_for('admin'))
+
+
+@app.route('/admin/backups/<path:key>')
+@admin_required
+def admin_backup_download(key):
+    if '..' in key or not key.startswith('db/'):
+        abort(404)
+    found = backup_store().get(key)
+    if found is None:
+        abort(404)
+    return Response(found[0], mimetype='application/vnd.sqlite3',
+                    headers={'Content-Disposition': f'attachment; filename="{key.split("/")[-1]}"'})
+
+
+@app.route('/admin/migrate-media', methods=['POST'])
+@admin_required
+def admin_migrate_media():
+    """Move photos saved on local disk before Blob Storage was set up into the media container"""
+    db = get_db()
+    if not storage.blob_configured():
+        flash('Blob Storage isn\'t configured, so there is nothing to migrate to.', 'error')
+        return redirect(url_for('admin'))
+    legacy = os.path.abspath(app.config['UPLOAD_FOLDER'])
+    moved = missing = 0
+    refs = [('tools', 'photo_path', r[0]) for r in db.execute(
+        "SELECT DISTINCT photo_path FROM tools WHERE photo_path IS NOT NULL AND photo_path NOT LIKE '%/%'")]
+    refs += [('users', 'avatar_path', r[0]) for r in db.execute(
+        "SELECT DISTINCT avatar_path FROM users WHERE avatar_path IS NOT NULL AND avatar_path NOT LIKE '%/%'")]
+    for table, column, name in refs:
+        path = os.path.join(legacy, name)
+        if not os.path.isfile(path):
+            missing += 1
+            continue
+        with open(path, 'rb') as f:
+            data = f.read()
+        new_key = media_store().put(f'listings/{name}' if table == 'tools' else f'avatars/{name}', data,
+                                    mimetypes.guess_type(name)[0] or 'application/octet-stream')
+        db.execute(f'UPDATE {table} SET {column} = ? WHERE {column} = ?', (new_key, name))
+        moved += 1
+    track(db, 'media_migrated', value=moved, missing=missing)
+    db.commit()
+    flash(f'Moved {moved} photo{"s" if moved != 1 else ""} to Blob Storage. {missing} missing on disk.', 'success')
+    return redirect(url_for('admin'))
+
+
+@app.route('/admin/users/<int:user_id>/reset-password', methods=['POST'])
+@admin_required
+def admin_reset_password(user_id):
+    """There's no email service yet, so an admin can issue a temporary password to pass on"""
+    db = get_db()
+    user = db.execute('SELECT id, name FROM users WHERE id = ? AND is_demo = 0', (user_id,)).fetchone()
+    if user is None:
+        abort(404)
+    temp = secrets.token_urlsafe(9)
+    db.execute('UPDATE users SET password_hash = ? WHERE id = ?', (generate_password_hash(temp), user_id))
+    track(db, 'password_reset_by_admin', user_id=user_id)
+    db.commit()
+    flash(f'Temporary password for {user["name"]}: {temp}  (shown once; ask them to change it under Account)', 'success')
+    return redirect(url_for('admin'))
 
 
 # ---------------------------------------------------------------------------
@@ -462,8 +1040,8 @@ def unlist_tool(tool_id):
 # ---------------------------------------------------------------------------
 
 def eval_allowed(key):
-    """Demo mode costs nothing, so it's open. With real models, require the EVAL_KEY app setting."""
-    if not listing_utils.ai_is_configured():
+    """Demo mode costs nothing, so it's open. With real models: admins, or the EVAL_KEY link."""
+    if not listing_utils.ai_is_configured() or is_admin():
         return True
     expected = os.getenv('EVAL_KEY', '')
     return bool(expected) and hmac.compare_digest(key or '', expected)
@@ -480,7 +1058,7 @@ def eval_page():
     ).fetchall()
     return render_template('eval.html', cases=eval_runner.load_cases(), tiers=eval_runner.TIERS,
                            allowed=eval_allowed(key), key=key, runs=runs,
-                           needs_key=listing_utils.ai_is_configured() and not os.getenv('EVAL_KEY'),
+                           needs_key=listing_utils.ai_is_configured() and not os.getenv('EVAL_KEY') and not is_admin(),
                            photo_tier=listing_utils.PHOTO_TIER, video_tier=listing_utils.VIDEO_TIER)
 
 
@@ -496,14 +1074,16 @@ def eval_run():
     run_id = (data.get('run_id') or uuid.uuid4().hex)[:40]
 
     result = eval_runner.run_case(case, tier)
-    get_db().execute(
+    db = get_db()
+    db.execute(
         """INSERT INTO eval_results (run_id, case_id, tier, model, score, passed, seconds, cost, error, result_json, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (run_id, case['id'], tier, result.get('model'), result.get('score'), int(bool(result.get('passed'))),
          result.get('seconds'), result.get('cost', 0), result.get('error'), json.dumps(result),
          datetime.now().isoformat(timespec='seconds'))
     )
-    get_db().commit()
+    track(db, 'eval_case', value=result.get('cost', 0), duration=result.get('seconds'), tier=tier, model=result.get('model'))
+    db.commit()
     return jsonify({'success': True, 'run_id': run_id, 'result': result})
 
 
@@ -521,14 +1101,6 @@ def eval_run_detail(run_id):
 @app.route('/eval/images/<path:filename>')
 def eval_image(filename):
     return send_from_directory(eval_runner.IMAGES_DIR, filename)
-
-
-@app.route('/switch-user/<int:user_id>', methods=['POST'])
-def switch_user(user_id):
-    if get_db().execute('SELECT id FROM users WHERE id = ?', (user_id,)).fetchone() is None:
-        abort(404)
-    session['user_id'] = user_id
-    return redirect(request.referrer or url_for('browse'))
 
 
 if __name__ == '__main__':

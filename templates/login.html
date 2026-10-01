@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}log in{% endblock %}
+{% block crumb %}<span class="sep">›</span><span>log in</span>{% endblock %}
+{% block content %}
+<div class="auth-card">
+    <h1>log in</h1>
+    <form method="post" action="{{ url_for('login', next=request.args.get('next')) }}">{{ csrf_field() }}
+        <label>email<input type="email" name="email" value="{{ email }}" autocomplete="email" required autofocus></label>
+        <label>password<input type="password" name="password" autocomplete="current-password" required></label>
+        <button type="submit" class="btn btn-primary btn-wide">log in</button>
+    </form>
+    <p class="muted small center">New to toolshare? <a href="{{ url_for('signup', next=request.args.get('next')) }}">Create an account</a></p>
+    <p class="muted small center">Forgot your password? Contact support and we'll send you a temporary one.</p>
+</div>
+{% endblock %}

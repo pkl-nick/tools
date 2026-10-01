@@ -1,0 +1,7 @@
+{% macro avatar(person, size='sm') -%}
+{%- if person.avatar_path -%}
+<img class="avatar avatar-{{ size }}" src="{{ url_for('uploaded_file', filename=person.avatar_path) }}" alt="">
+{%- else -%}
+<span class="avatar avatar-{{ size }} avatar-initials" aria-hidden="true">{{ person.name | initials }}</span>
+{%- endif -%}
+{%- endmacro %}

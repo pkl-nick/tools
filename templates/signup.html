@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}sign up{% endblock %}
+{% block crumb %}<span class="sep">›</span><span>sign up</span>{% endblock %}
+{% block content %}
+<div class="auth-card">
+    <h1>create your account</h1>
+    <p class="lede">Rent tools from neighbors for a dollar or two a day, or earn from the gear sitting in your garage.</p>
+    <form method="post" action="{{ url_for('signup', next=request.args.get('next')) }}">{{ csrf_field() }}
+        <label>name<input name="name" value="{{ form.get('name', '') }}" autocomplete="name" maxlength="60" required></label>
+        <label>email<input type="email" name="email" value="{{ form.get('email', '') }}" autocomplete="email" required></label>
+        <label>password<input type="password" name="password" autocomplete="new-password" minlength="8" required>
+            <span class="hint">at least 8 characters</span></label>
+        <label>neighborhood<input name="neighborhood" value="{{ form.get('neighborhood', '') }}" placeholder="e.g. Highland" maxlength="60" required>
+            <span class="hint">shown on your listings instead of your address</span></label>
+
+        <div class="field">
+            <span class="field-label">location</span>
+            <input type="hidden" name="lat" value="{{ form.get('lat', '') }}">
+            <input type="hidden" name="lng" value="{{ form.get('lng', '') }}">
+            <button type="button" class="btn btn-small" id="useLocation">use my location</button>
+            <span class="hint" id="locationStatus">So "nearest first" is accurate. Rounded to about a block, never shown.</span>
+        </div>
+
+        <div class="field">
+            <span class="field-label">batteries you own <span class="hint">(optional, for "fits my batteries")</span></span>
+            <div class="checks">
+                {% for p in platforms if p != 'Other' %}
+                <label class="inline chip-check"><input type="checkbox" name="battery_platforms" value="{{ p }}" {{ 'checked' if p in form.getlist('battery_platforms') }}> {{ p }}</label>
+                {% endfor %}
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-wide">create account</button>
+    </form>
+    <p class="muted small center">Already have an account? <a href="{{ url_for('login', next=request.args.get('next')) }}">Log in</a></p>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/location.js') }}"></script>{% endblock %}

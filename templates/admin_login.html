@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}admin{% endblock %}
+{% block crumb %}<span class="sep">›</span><span>admin</span>{% endblock %}
+{% block content %}
+<div class="auth-card">
+    <h1>admin</h1>
+    {% if enabled %}
+    <form method="post" action="{{ url_for('admin_login', next=request.args.get('next')) }}">{{ csrf_field() }}
+        <label>admin password<input type="password" name="password" autocomplete="current-password" required autofocus></label>
+        <button type="submit" class="btn btn-primary btn-wide">open dashboard</button>
+    </form>
+    <p class="muted small center">Admin access lasts 12 hours on this device.</p>
+    {% else %}
+    <p class="muted">The admin dashboard is turned off. Set an <code>ADMIN_PASSWORD</code> app setting to enable it.</p>
+    {% endif %}
+</div>
+{% endblock %}
