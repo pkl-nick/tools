@@ -425,3 +425,6 @@ th { font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; color:
 .courier-fields { display: grid; gap: .4rem; padding: .5rem; border: 1px dashed var(--border, #ccc); border-radius: 4px; }
 .courier-fields[hidden] { display: none; }
 .courier-status { display: block; margin-top: .2rem; }
+
+/* Search result pages */
+.pager { display: flex; align-items: center; justify-content: center; gap: .75rem; margin: 1rem 0; }

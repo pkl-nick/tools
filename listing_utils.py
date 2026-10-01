@@ -210,11 +210,14 @@ TOOL_ITEM_SCHEMA = {
         "confidence": {"type": "number", "description": "0-1 confidence in the identification"},
         "courier_size": {"type": "string", "enum": ["small", "medium", "large", "xlarge", "too_big"],
                          "description": "How a car courier would carry it, including case and accessories"},
-        "weight_lbs": {"type": "number", "description": "Estimated weight in pounds, including case and accessories"}
+        "weight_lbs": {"type": "number", "description": "Estimated weight in pounds, including case and accessories"},
+        "search_keywords": {"type": "string",
+                            "description": "Comma-separated other names and jobs people search for, not repeating the name"}
     },
     "required": ["name", "brand", "model", "category", "power_source", "battery_platform",
                  "description", "included_items", "replacement_value", "daily_price",
-                 "deposit", "risk_tier", "safety_notes", "confidence", "courier_size", "weight_lbs"]
+                 "deposit", "risk_tier", "safety_notes", "confidence", "courier_size", "weight_lbs",
+                 "search_keywords"]
 }
 
 # Structured Outputs (strict) guarantees the reply parses and matches this schema
@@ -260,6 +263,13 @@ How a delivery courier in a car would carry the tool with its case and accessori
 - too_big: needs a truck or two people (engine hoist, cabinet table saw, 60-gallon compressor, concrete mixer)
 weight_lbs: your best estimate of the weight in pounds.
 </courier_size>
+
+<search_keywords>
+Other words a renter might type to find this tool, comma separated, about 4-8 short phrases:
+- other names and slang (weed eater for string trimmer, cherry picker for engine hoist)
+- jobs it's used for (lug nuts, deck cleaning, fence posts)
+Don't repeat the listing name, brand or model.
+</search_keywords>
 
 <risk_tiers>
 - excluded: chainsaws, pole saws, log splitters, stump grinders.
@@ -321,32 +331,32 @@ def vision_listing_call(image_bytes: bytes, mime_type: str, tier: str = 'terra')
 
 # Demo-mode drafts, picked deterministically from the photo bytes
 MOCK_DRAFTS = [
-    dict(courier_size='small', weight_lbs=6, name='Cordless Hammer Drill', brand='DeWalt', model='DCD996', category='Power Tools',
+    dict(courier_size='small', weight_lbs=6, search_keywords='drill driver, masonry drill, concrete anchors, pilot holes', name='Cordless Hammer Drill', brand='DeWalt', model='DCD996', category='Power Tools',
          power_source='Battery', battery_platform='DeWalt 20V MAX',
          description='3-speed brushless hammer drill, drills masonry and drives lag screws.',
          included_items='Bare tool', replacement_value=220, confidence=0.86,
          safety_notes='Use the side handle when drilling large holes.'),
-    dict(courier_size='too_big', weight_lbs=65, name='Gas Pressure Washer, 3100 PSI', brand='Generac', model='', category='Outdoor & Yard',
+    dict(courier_size='too_big', weight_lbs=65, search_keywords='power washer, jet wash, driveway, deck cleaning', name='Gas Pressure Washer, 3100 PSI', brand='Generac', model='', category='Outdoor & Yard',
          power_source='Gas', battery_platform='', description='Cleans driveways, decks and siding.',
          included_items='Hose, wand, 4 nozzle tips', replacement_value=430, risk_tier='waiver', confidence=0.78,
          safety_notes='Never point the wand at people or pets.'),
-    dict(courier_size='medium', weight_lbs=30, name='Pancake Air Compressor, 6 Gal', brand='Porter-Cable', model='C2002', category='Air Tools & Compressors',
+    dict(courier_size='medium', weight_lbs=30, search_keywords='small compressor, inflate tires, brad nailer air, trim', name='Pancake Air Compressor, 6 Gal', brand='Porter-Cable', model='C2002', category='Air Tools & Compressors',
          power_source='Corded (120V)', battery_platform='', description='Oil-free, 150 PSI. Good for trim nailers and tires.',
          included_items='25 ft hose', replacement_value=180, confidence=0.91,
          safety_notes='Drain the tank after each use.'),
-    dict(courier_size='medium', weight_lbs=18, name='Strut Spring Compressor', brand='', model='', category='Automotive', power_source='Manual',
+    dict(courier_size='medium', weight_lbs=18, search_keywords='coil spring compressor, macpherson strut, suspension, shocks', name='Strut Spring Compressor', brand='', model='', category='Automotive', power_source='Manual',
          battery_platform='', description='Clamshell-style compressor for MacPherson strut springs.',
          included_items='Compressor, 2 jaw sets', replacement_value=200, risk_tier='waiver', confidence=0.64,
          safety_notes='Compressed springs store dangerous energy.'),
-    dict(courier_size='medium', weight_lbs=9, name='Circular Saw, 7-1/4"', brand='Milwaukee', model='2732-20 M18 FUEL', category='Power Tools',
+    dict(courier_size='medium', weight_lbs=9, search_keywords='skill saw, skilsaw, cutting plywood, 2x4', name='Circular Saw, 7-1/4"', brand='Milwaukee', model='2732-20 M18 FUEL', category='Power Tools',
          power_source='Battery', battery_platform='Milwaukee M18', description='Brushless circular saw, rips 2x lumber easily.',
          included_items='Bare tool, framing blade', replacement_value=280, risk_tier='waiver', confidence=0.88,
          safety_notes='Keep the blade guard working. Clamp the workpiece.'),
-    dict(courier_size='too_big', weight_lbs=55, name='Extension Ladder, 24 ft', brand='Werner', model='D1224-2', category='Ladders & Access',
+    dict(courier_size='too_big', weight_lbs=55, search_keywords='tall ladder, gutters, roof access, two story', name='Extension Ladder, 24 ft', brand='Werner', model='D1224-2', category='Ladders & Access',
          power_source='Manual', battery_platform='', description='Type I fiberglass ladder, safe near power lines.',
          included_items='Ladder', replacement_value=330, risk_tier='waiver', confidence=0.8,
          safety_notes='Set at a 4:1 angle and have someone foot it.'),
-    dict(courier_size='small', weight_lbs=4, name='Battery Pack & Charger', brand='Ryobi', model='P191 ONE+', category='Batteries & Chargers',
+    dict(courier_size='small', weight_lbs=4, search_keywords='spare battery, green lithium, one plus', name='Battery Pack & Charger', brand='Ryobi', model='P191 ONE+', category='Batteries & Chargers',
          power_source='Battery', battery_platform='Ryobi ONE+', description='Two 4Ah batteries with a dual-port charger.',
          included_items='2 batteries, charger', replacement_value=150, confidence=0.9,
          safety_notes='Do not use a swollen or cracked pack.'),
@@ -430,6 +440,8 @@ def normalize_draft(raw: Dict, owner_priced: bool = False) -> Dict:
     return {
         'courier_size': courier_size,
         'weight_lbs': round(weight, 1) if weight else None,
+        'search_keywords': ', '.join(k.strip() for k in str(raw.get('search_keywords') or '').split(',')
+                                     if k.strip())[:200],
         'name': name,
         'brand': str(raw.get('brand', '')).strip()[:60],
         'model': str(raw.get('model', '')).strip()[:60],

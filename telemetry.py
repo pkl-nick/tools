@@ -10,7 +10,8 @@ Events: page_view, signup, login, login_failed, logout, profile_updated,
 avatar_uploaded, password_changed, photo_analyzed, upload_limited,
 drafts_reviewed, listing_removed, booking_requested, booking_accepted,
 booking_declined, booking_returned, booking_cancelled, eval_case,
-backup_created, media_migrated, admin_login, admin_login_failed
+backup_created, media_migrated, admin_login, admin_login_failed, search (query text only,
+first page, value = result count), courier_dispatched, courier_status
 """
 
 import json

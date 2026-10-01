@@ -127,6 +127,15 @@ def top_pages(db, days=7, limit=10):
     ).fetchall()
 
 
+def searches(db, days=30, limit=10):
+    """What people search for, and what they search for that nobody nearby has listed (demand to recruit for)"""
+    q = "LOWER(json_extract(props, '$.q'))"
+    sql = f"""SELECT {q} AS q, COUNT(*) AS n, COUNT(DISTINCT COALESCE(user_id, visitor)) AS people FROM events
+              WHERE event = 'search' AND ts >= ? {{extra}} GROUP BY {q} ORDER BY n DESC LIMIT ?"""
+    return {'top': db.execute(sql.format(extra=''), (_since(days), limit)).fetchall(),
+            'empty': db.execute(sql.format(extra='AND value = 0'), (_since(days), limit)).fetchall()}
+
+
 def recent_users(db, limit=25):
     return db.execute(
         """SELECT u.id, u.name, u.email, u.neighborhood, u.created_at, u.last_login_at,
@@ -150,7 +159,7 @@ def collect(db):
     return {
         'kpis': kpis(db), 'daily': daily(db), 'ai_by_model': ai_by_model(db), 'categories': categories(db),
         'funnel': funnel(db), 'top_pages': top_pages(db), 'recent_users': recent_users(db),
-        'recent_events': recent_events(db),
+        'recent_events': recent_events(db), 'searches': searches(db),
     }
 
 

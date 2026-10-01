@@ -11,6 +11,7 @@ Same stack as the portfolio app: Flask, SQLite, Jinja templates and plain JS, wi
 - **Courier delivery (Uber Direct):** for tools that fit in a car, renters can choose an Uber courier both ways. It's priced from two live Uber quotes plus a markup, owners dispatch it from My garage, and status and tracking arrive by signed webhook. Trips run with Uber's test courier until `COURIER_LIVE=1`. See `docs/delivery.md`.
 - **Snap-to-list:** upload photos or a walkthrough video. Video is split into frames in the browser, and duplicate frames and duplicate tools are merged. A vision model drafts the title, brand and model, category, battery system, price, deposit and safety tier for each tool.
 - **Bulk review:** edit, approve or skip every draft on one page. Chainsaws and similar tools are blocked during the pilot.
+- **Search that scales:** SQLite R\*Tree (location) and FTS5 (text) indexes kept current by triggers. Stemming, prefixes and AI-written alternate names ("weed eater" finds a string trimmer). Best-match or nearest-first ordering and 25 results per page. About 20 ms per search at 500k listings. See `docs/search.md`.
 - **Browse:** nearest first, with search, category, distance and a "fits my batteries" filter.
 - **Rental requests:** live quote with a weekly discount, 10% renter service fee, 15% owner commission, and a refundable deposit hold. Optional delivery is priced by distance and time of day (rush hour and late night cost more). Risky tools require a safety acknowledgment.
 - **My garage:** owners accept, decline or mark returned; renters cancel. Overlapping bookings are blocked.
@@ -37,6 +38,7 @@ The database is created and seeded automatically at `instance/tools.db`. Delete 
 |---|---|
 | `app.py` | Flask routes |
 | `places.py`, `delivery.py` | Azure Maps ZIP/address lookups; Uber Direct quotes, dispatch and webhook checks |
+| `search.py` | Location + full-text search indexes and the one search function (`docs/search.md`) |
 | `storage.py` | Blob Storage (managed identity) or local-disk storage for photos and backups |
 | `telemetry.py`, `metrics.py` | Event log and the admin dashboard's numbers and chart geometry |
 | `listing_utils.py` | Vision prompt, model tiering (Luna/Terra/Sol) and Structured Outputs, draft normalization, pricing, distance |

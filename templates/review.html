@@ -60,6 +60,8 @@
                 </label>
             </div>
             <label>safety note for renters<input name="safety_notes_{{ d.id }}" value="{{ d.safety_notes }}"></label>
+            <label>also found by searching<input name="search_keywords_{{ d.id }}" value="{{ d.search_keywords }}" maxlength="200" placeholder="other names, jobs it does: weed eater, edging">
+                <span class="hint">not shown on the listing; helps renters who call it something else</span></label>
             <div class="row">
                 <label>$/day<input type="number" step="0.5" min="1" name="daily_price_{{ d.id }}" value="{{ '%g' % d.daily_price }}"></label>
                 <label>deposit $<input type="number" step="25" min="0" name="deposit_{{ d.id }}" value="{{ '%.0f' | format(d.deposit) }}"></label>

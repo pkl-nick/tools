@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}tools for rent{% endblock %}
 {% macro browse_url() -%}
-{%- set p = dict(q=q, category=category, platform=platform, max_miles=max_miles|int, view=view) -%}
+{%- set p = dict(q=q, category=category, platform=platform, max_miles=max_miles|int, view=view, sort=sort if q else None) -%}
 {%- set _ = p.update(kwargs) -%}
 {{ url_for('browse', **p) }}
 {%- endmacro %}
@@ -17,6 +17,7 @@
     <input type="hidden" name="q" value="{{ q }}">
     <input type="hidden" name="category" value="{{ category }}">
     <input type="hidden" name="view" value="{{ view }}">
+    {% if q %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
     <select name="platform" onchange="this.form.submit()" aria-label="Battery system">
         <option value="">any power source</option>
         {% if my_platforms %}
@@ -44,7 +45,9 @@
 
 <div class="result-head">
     <h1>{{ ('"' ~ q ~ '"') if q else (category | lower if category else 'tools for rent') }}</h1>
-    <span class="muted small">{{ tools | length }} result{{ 's' if tools | length != 1 }} · closest first{% if my_platforms %} · your batteries: {{ my_platforms | join(', ') }}{% endif %}</span>
+    <span class="muted small">{{ result.total }} result{{ 's' if result.total != 1 }} ·
+        {% if q %}{% if sort == 'best' %}best match · <a href="{{ browse_url(sort='closest', page=1) }}">closest first</a>{% else %}<a href="{{ browse_url(sort='best', page=1) }}">best match</a> · closest first{% endif %}{% else %}closest first{% endif %}
+        {%- if my_platforms %} · your batteries: {{ my_platforms | join(', ') }}{% endif %}</span>
 </div>
 {% if not current_user %}
 <form class="area-form" method="post" action="{{ url_for('set_area') }}" id="areaForm">{{ csrf_field() }}
@@ -56,6 +59,7 @@
 </form>
 {% endif %}
 
+{% if result.matched_any %}<p class="note small">No tool matched every word, so these match some of them.</p>{% endif %}
 {% if tools %}
 <ul class="results {{ 'gallery' if view == 'gallery' }}">
     {% for t in tools %}
@@ -85,9 +89,16 @@
     </li>
     {% endfor %}
 </ul>
+{% if result.pages > 1 %}
+<nav class="pager" aria-label="Pages">
+    {% if result.page > 1 %}<a class="btn btn-small" href="{{ browse_url(page=result.page - 1) }}">‹ prev</a>{% endif %}
+    <span class="muted small">page {{ result.page }} of {{ result.pages }}</span>
+    {% if result.page < result.pages %}<a class="btn btn-small" href="{{ browse_url(page=result.page + 1) }}">next ›</a>{% endif %}
+</nav>
+{% endif %}
 {% else %}
 <div class="empty">
-    <p>No tools match those filters yet.</p>
+    <p>{% if q %}Nobody near you has listed "{{ q }}" yet. Try a wider distance or another word.{% else %}No tools match those filters yet.{% endif %}</p>
     <a class="btn btn-primary" href="{{ url_for('list_tools') }}">post your own tools</a>
 </div>
 {% endif %}

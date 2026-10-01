@@ -7,6 +7,8 @@ tools so the browse page has something to show before anyone lists gear.
 
 import os
 import sqlite3
+
+import search
 from datetime import datetime
 
 DEFAULT_DB_PATH = os.path.join('instance', 'tools.db')
@@ -222,7 +224,7 @@ def get_connection(db_path=None):
 
 
 # Stored in SQLite's PRAGMA user_version; each migration below brings a database up one step
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def init_database(conn, seed=None):
@@ -282,7 +284,31 @@ def migrate(conn):
                          (sizing['courier_size'], sizing['weight_lbs'], tid))
         _deferred_sizing.clear()
         conn.execute('PRAGMA user_version = 4')
+        version = 4
+    if version < 5:
+        # v5: search indexes (R*Tree for location, FTS5 for text) and AI-written search keywords
+        conn.execute("ALTER TABLE tools ADD COLUMN search_keywords TEXT NOT NULL DEFAULT ''")
+        for name, keywords in SEED_KEYWORDS.items():
+            conn.execute('UPDATE tools SET search_keywords = ? WHERE name = ? AND owner_id IN '
+                         '(SELECT id FROM users WHERE is_demo = 1)', (keywords, name))
+        search.install(conn)
+        conn.execute('PRAGMA user_version = 5')
 
+
+# Alternate names and uses for the seeded tools (new listings get these from the AI)
+SEED_KEYWORDS = {
+    '60-Gallon Upright Air Compressor': 'shop compressor, air tank, inflate, spray painting, nail gun air',
+    'Framing Nailer': 'nail gun, framer, deck, fence, stud wall',
+    'Wet Tile Saw, 10"': 'tile cutter, porcelain, ceramic, backsplash, bathroom remodel',
+    'M18 5.0Ah Battery (x2)': 'battery pack, red lithium, spare battery',
+    'Gas Pressure Washer, 3300 PSI': 'power washer, jet wash, driveway, deck cleaning, siding',
+    'String Trimmer': 'weed eater, weed whacker, weedwacker, edger, line trimmer',
+    'Drywall Panel Lift': 'sheetrock lift, drywall hoist, ceiling panel, plasterboard',
+    'Coil Spring Compressor Kit': 'strut spring compressor, macpherson strut, suspension, shocks',
+    '2-Ton Folding Engine Hoist': 'cherry picker, engine crane, shop crane, engine lift, motor hoist',
+    '1/2" High-Torque Impact Wrench': 'impact gun, lug nuts, breaker, stuck bolts, tire change',
+    'Electric Concrete Mixer, 4 cu ft': 'cement mixer, mortar mixer, fence posts, concrete pad',
+}
 
 _deferred_sizing = []   # courier sizes for seeded tools, applied once migration v4 adds the columns
 
@@ -310,7 +336,7 @@ TOOL_COLUMNS = [
     'name', 'brand', 'model', 'category', 'power_source', 'battery_platform', 'description',
     'included_items', 'daily_price', 'deposit', 'replacement_value', 'risk_tier', 'safety_notes',
     'photo_path', 'ai_confidence', 'batch_id', 'status', 'created_at', 'published_at',
-    'pickup_lat', 'pickup_lng', 'courier_size', 'weight_lbs',
+    'pickup_lat', 'pickup_lng', 'courier_size', 'weight_lbs', 'search_keywords',
 ]
 
 

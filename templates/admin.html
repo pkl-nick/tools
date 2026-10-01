@@ -96,6 +96,25 @@
         </table></div>
         {% else %}<p class="muted">No visits yet.</p>{% endif %}
     </section>
+    <section>
+        <div class="bar"><span>searches with no results · last 30 days</span></div>
+        {% if m.searches.empty %}
+        <p class="muted small">Tools people want that nobody near them has listed. Good ones to recruit owners for.</p>
+        <div class="table-wrap"><table>
+            <thead><tr><th>search</th><th>times</th><th>people</th></tr></thead>
+            <tbody>{% for s in m.searches.empty %}<tr><td>{{ s.q }}</td><td>{{ s.n }}</td><td>{{ s.people }}</td></tr>{% endfor %}</tbody>
+        </table></div>
+        {% else %}<p class="muted">Every search found something.</p>{% endif %}
+    </section>
+    <section>
+        <div class="bar"><span>top searches · last 30 days</span><span class="muted small">{{ search_index }}</span></div>
+        {% if m.searches.top %}
+        <div class="table-wrap"><table>
+            <thead><tr><th>search</th><th>times</th><th>people</th></tr></thead>
+            <tbody>{% for s in m.searches.top %}<tr><td>{{ s.q }}</td><td>{{ s.n }}</td><td>{{ s.people }}</td></tr>{% endfor %}</tbody>
+        </table></div>
+        {% else %}<p class="muted">No searches yet.</p>{% endif %}
+    </section>
 </div>
 
 <div class="bar"><span>members</span><span class="muted">newest first</span></div>

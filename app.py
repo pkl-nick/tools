@@ -21,6 +21,7 @@ import db_builder
 import listing_utils
 import metrics
 import places
+import search
 import delivery
 import storage
 from telemetry import track
@@ -832,44 +833,32 @@ def browse():
         max_miles = float(request.args.get('max_miles', 10))
     except ValueError:
         max_miles = 10.0
+    max_miles = min(50.0, max(1.0, max_miles)) if max_miles == max_miles else 10.0    # also rejects NaN
 
-    sql = '''SELECT t.*, u.name AS owner_name, u.neighborhood, u.city, u.region,
-                  COALESCE(t.pickup_lat, u.lat) AS lat, COALESCE(t.pickup_lng, u.lng) AS lng, u.is_demo AS owner_is_demo
-             FROM tools t JOIN users u ON t.owner_id = u.id
-             WHERE t.status = 'listed' '''
-    params = []
-    if not app.config['SHOW_DEMO_LISTINGS']:
-        sql += ' AND u.is_demo = 0'
-    if q:
-        sql += ' AND (t.name LIKE ? OR t.brand LIKE ? OR t.model LIKE ? OR t.description LIKE ?)'
-        params += [f'%{q}%'] * 4
-    if category in listing_utils.CATEGORIES:
-        sql += ' AND t.category = ?'
-        params.append(category)
+    sort = 'best' if q and request.args.get('sort') != 'closest' else 'closest'
+    page = max(1, request.args.get('page', 1, type=int))
 
     my_platforms = user_platforms(g.user)
-    platforms = []
+    platforms = None
     if platform == 'mine':
         platforms = my_platforms
     elif platform in listing_utils.BATTERY_PLATFORMS:
         platforms = [platform]
-    if platform:
-        # Filter to tools that run on these batteries (empty list matches nothing)
-        sql += f" AND t.battery_platform IN ({','.join('?' for _ in platforms) or 'NULL'})"
-        params += platforms
 
     lat, lng = viewer_location()
-    tools = []
-    for row in get_db().execute(sql, params).fetchall():
-        miles = listing_utils.distance_miles(lat, lng, row['lat'], row['lng'])
-        if miles <= max_miles:
-            tools.append({**dict(row), 'miles': round(miles, 1)})
-    tools.sort(key=lambda t: (t['owner_is_demo'], t['miles']))   # real listings before samples
+    result = search.search_tools(get_db(), float(lat), float(lng), miles=max_miles, q=q,
+                                 category=category if category in listing_utils.CATEGORIES else None,
+                                 platforms=platforms, include_demo=app.config['SHOW_DEMO_LISTINGS'],
+                                 sort=sort, page=page)
+    tools = result['tools']
+    if q and page == 1:
+        track(get_db(), 'search', user_id=g.user['id'] if g.user else None, visitor=visitor_id(),
+              value=result['total'], q=q[:60], any_word=result['matched_any'])
+        get_db().commit()
 
     return render_template('browse.html', tools=tools, q=q, category=category, platform=platform,
-                           max_miles=max_miles, view=view, categories=listing_utils.CATEGORIES,
+                           max_miles=max_miles, view=view, sort=sort, result=result, categories=listing_utils.CATEGORIES,
                            platforms=listing_utils.BATTERY_PLATFORMS, my_platforms=my_platforms)
-
 
 
 @app.route('/area', methods=['POST'])
@@ -1155,7 +1144,7 @@ def review_drafts():
                 fields = {k: request.form.get(f'{k}_{draft["id"]}', draft[k]) for k in (
                     'name', 'brand', 'model', 'category', 'power_source', 'battery_platform',
                     'description', 'included_items', 'daily_price', 'deposit', 'replacement_value',
-                    'risk_tier', 'safety_notes')}
+                    'risk_tier', 'safety_notes', 'courier_size', 'weight_lbs', 'search_keywords')}
                 fields['confidence'] = draft['ai_confidence']
                 clean = listing_utils.normalize_draft(fields, owner_priced=True)
                 status = 'listed'
@@ -1454,6 +1443,7 @@ def admin():
         ('AI spend', 'ai_cost', True, 'estimated model cost per day (uploads + test bench)'),
     )]
     return render_template('admin.html', m=data, charts=charts, backups=backups, backup_error=backup_error,
+                           search_index=search.describe(get_db()),
                            media=media_store().describe(), blob=storage.blob_configured(),
                            legacy_photos=legacy_photos, eval_key=os.getenv('EVAL_KEY', ''),
                            models={'photo': listing_utils.PHOTO_TIER, 'video': listing_utils.VIDEO_TIER,

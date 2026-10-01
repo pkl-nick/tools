@@ -162,7 +162,7 @@ def test_browse_search_and_distance(client):
     assert b'Engine Hoist' in res.data
     assert b'Pressure Washer' not in res.data
     assert b'Engine Hoist' not in client.get('/?q=hoist&max_miles=0.5').data
-    assert b'No tools match' in client.get('/?q=zzz-no-such-tool').data
+    assert b'listed "zzz-no-such-tool" yet' in client.get('/?q=zzz-no-such-tool').data
 
 
 # --- snap-to-list ----------------------------------------------------------
@@ -752,6 +752,9 @@ def test_migration_from_v1_database(tmp_path):
     t = conn.execute('SELECT * FROM tools').fetchone()
     assert u['is_demo'] == 1 and u['email'] is None and t['published_at'] and t['daily_price'] == 3
     assert u['offers_delivery'] == 1 and u['postal_code'] is None and 'courier_size' in t.keys()
+    # v5 indexes are built from the rows that already existed
+    assert conn.execute("SELECT rowid FROM tools_fts WHERE tools_fts MATCH 'saw'").fetchone()[0] == t['id']
+    assert conn.execute('SELECT COUNT(*) FROM tools_geo').fetchone()[0] == 1
     assert conn.execute('PRAGMA user_version').fetchone()[0] == db_builder.SCHEMA_VERSION
 
 
@@ -1164,3 +1167,138 @@ def test_ai_drafts_include_courier_size():
     assert d['courier_size'] == 'small' and d['weight_lbs'] == 6
     # Unknown sizes aren't guessed: the tool just isn't offered for courier delivery
     assert listing_utils.normalize_draft({'name': 'X', 'courier_size': 'huge'})['courier_size'] is None
+
+
+# ---------------------------------------------------------------------------
+# Search indexes (R*Tree + FTS5)
+# ---------------------------------------------------------------------------
+
+import search   # noqa: E402
+
+
+def result_names(client, url):
+    import html
+    return [html.unescape(n) for n in re.findall(r'class="result-title"[^>]*>([^<]+)<', client.get(url).data.decode())]
+
+
+def test_search_finds_other_names_stems_and_prefixes(client):
+    assert 'String Trimmer' in result_names(client, '/?q=weed+eater&max_miles=25')        # AI keywords
+    assert '2-Ton Folding Engine Hoist' in result_names(client, '/?q=cherry+picker&max_miles=25')
+    assert 'Framing Nailer' in result_names(client, '/?q=nailers&max_miles=25')           # stemming
+    assert 'Gas Pressure Washer, 3300 PSI' in result_names(client, '/?q=press&max_miles=25')   # prefix
+    assert 'Framing Nailer' in result_names(client, '/?q=2744&max_miles=25')              # model number
+
+
+def test_search_ranks_name_matches_first_and_can_sort_by_distance(client):
+    owner = make_user(client, 'Near Ned', lat=CENTER[0], lng=CENTER[1])
+    # A tool that only mentions a compressor in passing, right next to the viewer
+    add_tool(owner, name='Tire Inflator Hose', description='Hooks up to any air compressor.')
+    best = result_names(client, '/?q=compressor&max_miles=25')
+    assert best.index('60-Gallon Upright Air Compressor') < best.index('Tire Inflator Hose')
+    closest = result_names(client, '/?q=compressor&max_miles=25&sort=closest')
+    assert closest[0] == 'Tire Inflator Hose'          # real listings and nearest first
+
+
+def test_search_falls_back_to_any_word(client):
+    page = client.get('/?q=milwaukee+snowblower&max_miles=25').data
+    assert b'matched every word' in page and b'Framing Nailer' in page
+
+
+def test_search_text_cannot_inject_fts_syntax(client):
+    for q in ['"', 'NEAR(', 'drill OR', '*', 'name:x', "'; DROP TABLE tools; --"]:
+        assert client.get('/', query_string={'q': q}).status_code == 200
+
+
+def test_index_follows_moves_unlisting_and_edits(client):
+    owner = make_user(client, 'Mover Mo', lat=CENTER[0], lng=CENTER[1])
+    tid = add_tool(owner, name='Pipe Threader')
+    client.post('/logout')         # search as a visitor at the default center, not as the owner
+    assert 'Pipe Threader' in result_names(client, '/?q=threader')
+    db_exec('UPDATE users SET lat = ?, lng = ? WHERE id = ?', (CENTER[0] + 2, CENTER[1], owner))   # owner moves away
+    assert 'Pipe Threader' not in result_names(client, '/?q=threader&max_miles=50')
+    db_exec('UPDATE tools SET pickup_lat = ?, pickup_lng = ? WHERE id = ?', (CENTER[0], CENTER[1], tid))
+    assert 'Pipe Threader' in result_names(client, '/?q=threader')                          # own pickup spot
+    db_exec("UPDATE tools SET name = 'Rebar Bender' WHERE id = ?", (tid,))
+    assert result_names(client, '/?q=threader') == [] and 'Rebar Bender' in result_names(client, '/?q=rebar')
+    db_exec("UPDATE tools SET status = 'skipped' WHERE id = ?", (tid,))
+    assert 'Rebar Bender' not in result_names(client, '/?q=rebar')
+    with app_module.app.app_context():
+        assert app_module.get_db().execute("INSERT INTO tools_fts (tools_fts) VALUES ('integrity-check')")
+
+
+def test_search_pages_results(client):
+    owner = make_user(client, 'Many Mae', lat=CENTER[0], lng=CENTER[1])
+    for i in range(30):
+        add_tool(owner, name=f'Clamp {i:02d}')
+    first = result_names(client, '/?q=clamp')
+    second = result_names(client, '/?q=clamp&page=2')
+    assert len(first) == 25 and len(second) == 5 and not set(first) & set(second)
+    assert b'page 1 of 2' in client.get('/?q=clamp').data
+
+
+def test_far_away_tools_are_never_read(client):
+    """The R*Tree box keeps other cities out of the query entirely"""
+    with app_module.app.app_context():
+        db = app_module.get_db()
+        lo_lat, hi_lat, lo_lng, hi_lng = search.box(CENTER[0], CENTER[1], 10)
+        inside = db.execute('SELECT COUNT(*) FROM tools_geo WHERE min_lat >= ? AND max_lat <= ? '
+                            'AND min_lng >= ? AND max_lng <= ?', (lo_lat, hi_lat, lo_lng, hi_lng)).fetchone()[0]
+        plan = ' '.join(r[3] for r in db.execute(
+            'EXPLAIN QUERY PLAN SELECT id FROM tools_geo WHERE min_lat >= 1 AND max_lat <= 2 '
+            'AND min_lng >= 1 AND max_lng <= 2'))
+    assert inside > 0 and 'VIRTUAL TABLE INDEX' in plan
+
+
+def test_search_without_rtree_or_fts_falls_back(tmp_path):
+    """Builds without the SQLite extensions still search correctly, just without the fast indexes"""
+    conn = db_builder.get_connection(str(tmp_path / 'plain.db'))
+    db_builder.init_database(conn)
+    for name in ('tools_fts', 'tools_geo'):
+        conn.execute(f'DROP TABLE {name}')
+    for (trigger,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'").fetchall():
+        conn.execute(f'DROP TRIGGER {trigger}')
+    original = search.has_module
+    search.has_module = lambda c, sql: False
+    try:
+        search.install(conn)
+    finally:
+        search.has_module = original
+    found = search.search_tools(conn, CENTER[0], CENTER[1], miles=25, q='hoist')
+    assert '2-Ton Folding Engine Hoist' in [t['name'] for t in found['tools']]
+    assert search.search_tools(conn, CENTER[0], CENTER[1], miles=25, q='cherry picker')['total'] == 1
+
+
+def test_review_keeps_ai_courier_size_and_keywords(client):
+    make_user(client, 'Poster Pat')
+    client.post('/api/analyze-photo', data={'photo': (io.BytesIO(b'img-1'), 'garage.jpg')},
+                content_type='multipart/form-data')
+    draft = db_query("SELECT * FROM tools WHERE status = 'draft'")[0]
+    assert draft['courier_size'] and draft['search_keywords']
+    client.post('/list/review', data={f'action_{draft["id"]}': 'approve'})
+    listed = db_query('SELECT * FROM tools WHERE id = ?', (draft['id'],))[0]
+    assert listed['status'] == 'listed'
+    assert (listed['courier_size'], listed['search_keywords']) == (draft['courier_size'], draft['search_keywords'])
+
+
+def test_admin_shows_searches_with_no_results(client, monkeypatch):
+    monkeypatch.setenv('ADMIN_PASSWORD', 'admin-pass-123')
+    client.get('/?q=snowblower')
+    client.get('/?q=snowblower')
+    client.get('/?q=hoist&max_miles=25')
+    client.post('/admin/login', data={'password': 'admin-pass-123'})
+    page = client.get('/admin').data.decode()
+    empty = page[page.index('searches with no results'):page.index('top searches')]
+    assert 'snowblower' in empty and 'hoist' not in empty
+    assert 'R*Tree + FTS5' in page
+
+
+def test_owner_can_edit_search_words_on_review(client):
+    make_user(client, 'Poster Pat')
+    client.post('/api/analyze-photo', data={'photo': (io.BytesIO(b'img-2'), 'garage.jpg')},
+                content_type='multipart/form-data')
+    draft = db_query("SELECT * FROM tools WHERE status = 'draft'")[0]
+    assert draft['search_keywords'].encode() in client.get('/list/review').data
+    client.post('/list/review', data={f'action_{draft["id"]}': 'approve',
+                                      f'search_keywords_{draft["id"]}': 'zorbulator, gizmo'})
+    client.post('/logout')
+    assert draft['name'] in result_names(client, '/?q=zorbulator&max_miles=25')
