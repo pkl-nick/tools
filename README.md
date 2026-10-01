@@ -48,5 +48,6 @@ The database is created and seeded automatically at `instance/tools.db`. Delete 
 | `evals/` | Test photos, expected answers (`cases.json`), grader, runner, and credits (`ATTRIBUTION.md`) |
 | `deploy/` | `azure-deploy.sh` (app + storage + identity), `setup-sign-in.sh` (Microsoft app registration + Google client), `set-stripe-keys.sh`, `setup-delivery.sh` (Uber Direct) |
 | `docs/payments-plan.md`, `docs/stripe-setup.md` | Deposit recommendation, money flow, and your Stripe checklist |
+| `SETUP-CHECKLIST.md` | Your setup to-do list: Azure, Microsoft, Google, Uber Direct, Stripe, smoke test, decisions |
 | `docs/delivery.md` | ZIP-based locations and the Uber Direct courier flow, with your setup checklist |
 | `docs/research.md` | Market research behind the idea |
