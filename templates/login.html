@@ -1,9 +1,11 @@
 {% extends "base.html" %}
+{% from "macros.html" import provider_buttons with context %}
 {% block title %}log in{% endblock %}
 {% block crumb %}<span class="sep">›</span><span>log in</span>{% endblock %}
 {% block content %}
 <div class="auth-card">
     <h1>log in</h1>
+    {{ provider_buttons(sign_in_providers, request.args.get('next'), 'log in') }}
     <form method="post" action="{{ url_for('login', next=request.args.get('next')) }}">{{ csrf_field() }}
         <label>email<input type="email" name="email" value="{{ email }}" autocomplete="email" required autofocus></label>
         <label>password<input type="password" name="password" autocomplete="current-password" required></label>

@@ -89,6 +89,18 @@ CREATE TABLE IF NOT EXISTS eval_results (
 );
 CREATE INDEX IF NOT EXISTS idx_eval_run ON eval_results(run_id);
 
+-- Google / Microsoft sign-ins linked to an account
+CREATE TABLE IF NOT EXISTS identities (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    provider TEXT NOT NULL,          -- google | microsoft
+    subject TEXT NOT NULL,           -- the provider's stable user id ("sub")
+    email TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (provider, subject)
+);
+CREATE INDEX IF NOT EXISTS idx_identities_user ON identities(user_id);
+
 -- Product telemetry (see telemetry.py)
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY,
@@ -193,7 +205,7 @@ def get_connection(db_path=None):
 
 
 # Stored in SQLite's PRAGMA user_version; each migration below brings a database up one step
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def init_database(conn, seed=None):
@@ -226,6 +238,12 @@ def migrate(conn):
         conn.execute('ALTER TABLE tools ADD COLUMN published_at TEXT')
         conn.execute("UPDATE tools SET published_at = created_at WHERE status = 'listed'")
         conn.execute('PRAGMA user_version = 2')
+        version = 2
+    if version < 3:
+        # v3: each listing can have its own pickup spot (else the owner's profile location is used)
+        conn.execute('ALTER TABLE tools ADD COLUMN pickup_lat REAL')
+        conn.execute('ALTER TABLE tools ADD COLUMN pickup_lng REAL')
+        conn.execute('PRAGMA user_version = 3')
 
 
 def seed_demo_data(conn):
@@ -248,6 +266,7 @@ TOOL_COLUMNS = [
     'name', 'brand', 'model', 'category', 'power_source', 'battery_platform', 'description',
     'included_items', 'daily_price', 'deposit', 'replacement_value', 'risk_tier', 'safety_notes',
     'photo_path', 'ai_confidence', 'batch_id', 'status', 'created_at', 'published_at',
+    'pickup_lat', 'pickup_lng',
 ]
 
 

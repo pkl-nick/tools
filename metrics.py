@@ -125,7 +125,9 @@ def recent_users(db, limit=25):
     return db.execute(
         """SELECT u.id, u.name, u.email, u.neighborhood, u.created_at, u.last_login_at,
                   (SELECT COUNT(*) FROM tools t WHERE t.owner_id = u.id AND t.status = 'listed') AS listings,
-                  (SELECT COUNT(*) FROM bookings b WHERE b.renter_id = u.id) AS rentals
+                  (SELECT COUNT(*) FROM bookings b WHERE b.renter_id = u.id) AS rentals,
+                  TRIM((CASE WHEN u.password_hash IS NOT NULL THEN 'email ' ELSE '' END) ||
+                       COALESCE((SELECT GROUP_CONCAT(provider, ' ') FROM identities i WHERE i.user_id = u.id), '')) AS methods
            FROM users u WHERE u.is_demo = 0 ORDER BY u.created_at DESC LIMIT ?""", (limit,)
     ).fetchall()
 

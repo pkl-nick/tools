@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}welcome{% endblock %}
+{% block crumb %}<span class="sep">›</span><span>welcome</span>{% endblock %}
+{% block content %}
+<div class="auth-card">
+    <h1>welcome, {{ current_user.name.split(' ')[0] }}</h1>
+    <p class="lede">One more step: tell neighbors roughly where you are, so "nearest first" works for you.</p>
+    <form method="post" action="{{ url_for('welcome', next=request.args.get('next')) }}">{{ csrf_field() }}
+        <label>neighborhood<input name="neighborhood" placeholder="e.g. Highland" maxlength="60" required autofocus>
+            <span class="hint">shown on your listings instead of your address</span></label>
+        <div class="field">
+            <span class="field-label">location</span>
+            <input type="hidden" name="lat" value="">
+            <input type="hidden" name="lng" value="">
+            <button type="button" class="btn btn-small" id="useLocation">use my location</button>
+            <span class="hint" id="locationStatus">Rounded to about a block and never shown.</span>
+        </div>
+        <div class="field">
+            <span class="field-label">batteries you own <span class="hint">(optional)</span></span>
+            <div class="checks">
+                {% for p in platforms if p != 'Other' %}
+                <label class="inline chip-check"><input type="checkbox" name="battery_platforms" value="{{ p }}"> {{ p }}</label>
+                {% endfor %}
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-wide">finish</button>
+    </form>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/geo.js') }}"></script><script src="{{ url_for('static', filename='js/location.js') }}"></script>{% endblock %}

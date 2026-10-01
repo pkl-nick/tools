@@ -100,10 +100,10 @@
 <div class="bar"><span>members</span><span class="muted">newest first</span></div>
 {% if m.recent_users %}
 <div class="table-wrap"><table>
-    <thead><tr><th>name</th><th>email</th><th>neighborhood</th><th>listings</th><th>rentals</th><th>joined</th><th>last login</th><th></th></tr></thead>
+    <thead><tr><th>name</th><th>email</th><th>sign-in</th><th>neighborhood</th><th>listings</th><th>rentals</th><th>joined</th><th>last login</th><th></th></tr></thead>
     <tbody>{% for u in m.recent_users %}
     <tr>
-        <td><a href="{{ url_for('profile', user_id=u.id) }}">{{ u.name }}</a></td><td>{{ u.email }}</td><td>{{ u.neighborhood }}</td>
+        <td><a href="{{ url_for('profile', user_id=u.id) }}">{{ u.name }}</a></td><td>{{ u.email }}</td><td>{{ u.methods }}</td><td>{{ u.neighborhood }}</td>
         <td>{{ u.listings }}</td><td>{{ u.rentals }}</td><td>{{ (u.created_at or '')[:10] }}</td><td>{{ (u.last_login_at or '')[:16] | replace('T', ' ') }}</td>
         <td class="row-actions"><form method="post" action="{{ url_for('admin_reset_password', user_id=u.id) }}" onsubmit="return confirm('Give {{ u.name }} a temporary password? Their current one stops working.')">{{ csrf_field() }}<button class="btn btn-small">reset password</button></form></td>
     </tr>

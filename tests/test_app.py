@@ -756,3 +756,149 @@ def test_migration_from_v1_database(tmp_path):
 def test_security_headers(client):
     h = client.get('/').headers
     assert h['X-Content-Type-Options'] == 'nosniff' and h['X-Frame-Options'] == 'DENY'
+
+
+# --- Google / Microsoft sign-in ---------------------------------------------
+
+class FakeOAuthClient:
+    """Stands in for Authlib's client: the redirect goes nowhere, the callback returns canned claims"""
+    def __init__(self, claims):
+        self.claims = claims
+        self.last_options = 'unset'
+
+    def authorize_redirect(self, redirect_uri, **kw):
+        from flask import redirect as flask_redirect
+        self.redirect_uri = redirect_uri
+        return flask_redirect('https://provider.example/authorize')
+
+    def authorize_access_token(self, claims_options=None):
+        self.last_options = claims_options
+        return {'access_token': 'x', 'userinfo': self.claims}
+
+
+@pytest.fixture
+def sso(monkeypatch):
+    for k in ('GOOGLE', 'MICROSOFT'):
+        monkeypatch.setenv(f'{k}_CLIENT_ID', 'id')
+        monkeypatch.setenv(f'{k}_CLIENT_SECRET', 'secret')
+    clients = {}
+
+    def use(provider, **claims):
+        clients[provider] = FakeOAuthClient(claims)
+        return clients[provider]
+    monkeypatch.setattr(app_module, 'oauth_client', lambda name: clients[name])
+    return use
+
+
+GOOGLE_PAT = dict(sub='g-123', email='pat@gmail.com', email_verified=True, name='Pat Google')
+
+
+def test_sign_in_buttons_only_when_configured(client, sso):
+    page = client.get('/login').data
+    assert b'log in with Google' in page and b'log in with Microsoft' in page
+
+
+def test_sign_in_buttons_hidden_without_config(client):
+    assert b'with Google' not in client.get('/login').data
+    assert client.get('/auth/google').status_code == 404
+
+
+def test_google_sign_up_then_finish_profile(client, sso):
+    fake = sso('google', **GOOGLE_PAT)
+    start = client.get('/auth/google?next=/list')
+    assert start.status_code == 302 and fake.redirect_uri.endswith('/auth/google/callback')
+    cb = client.get('/auth/google/callback?code=c&state=s')
+    assert cb.headers['Location'] == '/list'
+    # new social accounts must finish their profile first
+    res = client.get('/list')
+    assert res.status_code == 302 and '/welcome' in res.headers['Location']
+    client.post('/welcome?next=/list', data={'neighborhood': 'Highland', 'lat': '39.76', 'lng': '-105.01'})
+    assert client.get('/list').status_code == 200
+    u = db_query("SELECT * FROM users WHERE email = 'pat@gmail.com'")[0]
+    assert u['password_hash'] is None and u['name'] == 'Pat Google' and u['lat'] == 39.76
+    assert db_query('SELECT provider, subject FROM identities')[0]['subject'] == 'g-123'
+    # signing in again finds the same account
+    client.post('/logout')
+    sso('google', **GOOGLE_PAT)
+    client.get('/auth/google'); client.get('/auth/google/callback')
+    assert len(db_query('SELECT id FROM users WHERE is_demo = 0')) == 1
+
+
+def test_verified_google_email_links_to_existing_password_account(client, sso):
+    uid = make_user(client, 'Pat', email='pat@gmail.com')
+    client.post('/logout')
+    sso('google', **GOOGLE_PAT)
+    client.get('/auth/google'); client.get('/auth/google/callback')
+    assert db_query('SELECT user_id FROM identities')[0]['user_id'] == uid
+    assert client.get('/garage').status_code == 200
+
+
+def test_unverified_or_microsoft_email_never_takes_over_an_account(client, sso):
+    make_user(client, 'Pat', email='pat@contoso.com')
+    client.post('/logout')
+    tid = 'tenant-1'
+    sso('microsoft', sub='m-1', email='pat@contoso.com', tid=tid, iss=f'https://login.microsoftonline.com/{tid}/v2.0')
+    client.get('/auth/microsoft')
+    res = client.get('/auth/microsoft/callback', follow_redirects=True)
+    assert b'already exists' in res.data
+    assert db_query('SELECT COUNT(*) AS n FROM identities')[0]['n'] == 0
+    assert client.get('/garage').status_code == 302          # not logged in
+    sso('google', sub='g-9', email='pat@contoso.com', email_verified=False)
+    client.get('/auth/google'); client.get('/auth/google/callback')
+    assert db_query('SELECT COUNT(*) AS n FROM identities')[0]['n'] == 0
+
+
+def test_microsoft_sign_in_checks_issuer_matches_tenant(client, sso):
+    bad = sso('microsoft', sub='m-2', email='new@outlook.com', tid='t1', iss='https://evil.example/t1/v2.0')
+    client.get('/auth/microsoft')
+    res = client.get('/auth/microsoft/callback', follow_redirects=True)
+    assert b'sign-in didn' in res.data and bad.last_options == {'iss': {'essential': True}}
+    sso('microsoft', sub='m-2', email='new@outlook.com', tid='t1', iss='https://login.microsoftonline.com/t1/v2.0', name='New')
+    client.get('/auth/microsoft'); client.get('/auth/microsoft/callback')
+    assert db_query("SELECT name FROM users WHERE email = 'new@outlook.com'")[0]['name'] == 'New'
+
+
+def test_connect_and_disconnect_from_account(client, sso):
+    uid = make_user(client, 'Pat', email='pat@example.com')
+    tid = 't'
+    sso('microsoft', sub='m-7', email='other@work.com', tid=tid, iss=f'https://login.microsoftonline.com/{tid}/v2.0')
+    client.get('/auth/microsoft?link=1'); client.get('/auth/microsoft/callback')
+    assert db_query('SELECT user_id, provider FROM identities')[0]['user_id'] == uid
+    assert b'connected' in client.get('/account').data
+    client.post('/auth/microsoft/disconnect')
+    assert db_query('SELECT COUNT(*) AS n FROM identities')[0]['n'] == 0
+
+
+def test_social_only_account_must_set_password_before_disconnecting(client, sso):
+    sso('google', **GOOGLE_PAT)
+    client.get('/auth/google'); client.get('/auth/google/callback')
+    client.post('/welcome', data={'neighborhood': 'Baker'})
+    client.post('/auth/google/disconnect')
+    assert db_query('SELECT COUNT(*) AS n FROM identities')[0]['n'] == 1
+    client.post('/account/password', data={'new_password': 'brandnewpass'})   # no current password needed
+    client.post('/auth/google/disconnect')
+    assert db_query('SELECT COUNT(*) AS n FROM identities')[0]['n'] == 0
+    client.post('/logout')
+    assert client.post('/login', data={'email': 'pat@gmail.com', 'password': 'brandnewpass'}).status_code == 302
+
+
+# --- pickup location --------------------------------------------------------
+
+def test_post_can_use_current_location_as_pickup(client):
+    make_user(client, 'Pat')                       # no profile location (city center)
+    far = (CENTER[0] + 0.3, CENTER[1])             # ~20 miles north
+    client.post('/api/analyze-photo', data={'photo': (fake_jpeg(), 'a.jpg'), 'pickup_lat': str(far[0]),
+                                            'pickup_lng': str(far[1])}, content_type='multipart/form-data')
+    tool = db_query("SELECT * FROM tools WHERE status = 'draft'")[0]
+    assert (tool['pickup_lat'], tool['pickup_lng']) == (round(far[0], 3), round(far[1], 3))
+    form = {f'action_{r["id"]}': 'approve' for r in db_query("SELECT id FROM tools WHERE status = 'draft'")}
+    client.post('/list/review', data=form)
+    page = client.get(f"/tool/{tool['id']}").data.decode()
+    assert re.search(r'2\d\.\d mi away', page)       # distance from the pickup spot, not the profile
+    assert tool['name'].encode() not in client.get('/?max_miles=10').data
+
+
+def test_post_page_asks_where_tools_are(client):
+    make_user(client, 'Pat')
+    page = client.get('/list').data
+    assert b'where will renters pick these tools up?' in page and b'geo.js' in page

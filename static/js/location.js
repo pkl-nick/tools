@@ -1,4 +1,5 @@
-// "Use my location": fills the hidden lat/lng fields from the browser's geolocation.
+// Profile location (sign-up, welcome, account): fills the hidden lat/lng fields.
+// Asks permission when the button is tapped; if permission was already granted it fills in silently.
 // The server rounds to ~100 m, so exact addresses are never stored.
 (function () {
     const btn = document.getElementById('useLocation');
@@ -7,21 +8,22 @@
     const lat = document.querySelector('input[name="lat"]');
     const lng = document.querySelector('input[name="lng"]');
 
-    btn.addEventListener('click', () => {
-        if (!navigator.geolocation) {
-            status.textContent = 'Your browser can\'t share location. Distances will use the city center.';
-            return;
+    async function locate() {
+        status.textContent = 'Asking your browser for your location…';
+        try {
+            const pos = await window.toolshareGeo.request();
+            lat.value = pos.lat;
+            lng.value = pos.lng;
+            status.textContent = '✓ Location set (rounded to about a block, never shown).';
+            btn.textContent = 'update location';
+        } catch (e) {
+            status.textContent = e.message + ' Distances will use your neighborhood\'s area until then.';
         }
-        status.textContent = 'Finding you…';
-        navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                lat.value = pos.coords.latitude.toFixed(4);
-                lng.value = pos.coords.longitude.toFixed(4);
-                status.textContent = '✓ Location set (rounded to about a block).';
-                btn.textContent = 'update location';
-            },
-            () => { status.textContent = 'Location blocked. Distances will use the city center until you allow it.'; },
-            { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 }
-        );
+    }
+
+    btn.addEventListener('click', locate);
+    window.toolshareGeo.permissionState().then((state) => {
+        if (state === 'granted' && !lat.value) locate();
+        if (state === 'prompt') btn.classList.add('btn-primary');
     });
 })();

@@ -5,6 +5,18 @@
 <h1>post your tools</h1>
 <p class="lede">Walk your garage and snap your tools. We identify each one, read the brand and model where we can, and draft a price and deposit. You review everything before it posts.</p>
 
+<div class="pickup-card" id="pickupCard" data-profile-located="{{ '1' if profile_located else '0' }}">
+    <div class="field-label">1. where will renters pick these tools up?</div>
+    <div class="checks">
+        <label class="inline chip-check"><input type="radio" name="pickup" value="profile" {{ 'checked' if profile_located }}>
+            my profile location <span class="muted small">({{ current_user.neighborhood }})</span></label>
+        <label class="inline chip-check"><input type="radio" name="pickup" value="current" {{ 'checked' if not profile_located }}>
+            where I am right now</label>
+    </div>
+    <span class="hint" id="pickupStatus">{% if profile_located %}Using your profile location. Choose "where I am right now" if the tools are somewhere else, like a shop or a second garage.{% else %}Your profile doesn't have a location yet, so we'll ask your browser where you are. You can also set one in <a href="{{ url_for('account') }}">account settings</a>.{% endif %}</span>
+</div>
+
+<div class="field-label">2. add photos or a video</div>
 <div class="upload-options">
     <label class="upload-card">
         <input type="file" id="photoInput" accept="image/*" multiple hidden>
@@ -39,5 +51,6 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/geo.js') }}"></script>
 <script src="{{ url_for('static', filename='js/list.js') }}"></script>
 {% endblock %}

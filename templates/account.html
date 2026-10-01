@@ -53,14 +53,35 @@
             </div>
         </form>
 
-        <div class="bar">password</div>
+        {% if sign_in_providers or linked %}
+        <div class="bar">sign-in methods</div>
+        <ul class="signin-methods">
+            <li><span><b>email &amp; password</b> <span class="muted small">{{ 'set' if has_password else 'not set' }}</span></span></li>
+            {% for key in ['google', 'microsoft'] if key in sign_in_providers or key in linked %}
+            <li>
+                <span><b>{{ 'Google' if key == 'google' else 'Microsoft' }}</b>
+                    <span class="muted small">{{ ('connected · ' ~ (linked[key].email or '')) if key in linked else 'not connected' }}</span></span>
+                {% if key in linked %}
+                <form method="post" action="{{ url_for('oauth_disconnect', provider=key) }}">{{ csrf_field() }}<button class="btn btn-small">disconnect</button></form>
+                {% elif key in sign_in_providers %}
+                <a class="btn btn-small" href="{{ url_for('oauth_start', provider=key, link=1) }}">connect</a>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+
+        <div class="bar">{{ 'password' if has_password else 'set a password' }}</div>
+        {% if not has_password %}<p class="muted small">You sign in with {{ linked.keys() | map('capitalize') | join(' or ') }}. Add a password to also log in with your email.</p>{% endif %}
         <form method="post" action="{{ url_for('account_password') }}">{{ csrf_field() }}
+            {% if has_password %}
             <label>current password<input type="password" name="current_password" autocomplete="current-password" required></label>
+            {% endif %}
             <label>new password<input type="password" name="new_password" autocomplete="new-password" minlength="{{ min_password }}" required>
                 <span class="hint">at least {{ min_password }} characters</span></label>
-            <button type="submit" class="btn">change password</button>
+            <button type="submit" class="btn">{{ 'change password' if has_password else 'set password' }}</button>
         </form>
     </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='js/location.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/geo.js') }}"></script><script src="{{ url_for('static', filename='js/location.js') }}"></script>{% endblock %}

@@ -5,7 +5,8 @@ Rent specialty tools from neighbors. Owners walk their garage with a phone, AI d
 Same stack as the portfolio app: Flask, SQLite, Jinja templates and plain JS, with Azure OpenAI GPT-5.6 (Luna, Terra, Sol) for vision via the v1 Responses API. The design is "Craigslist, evolved": text-first listings, blue link titles and the purple brand, with a modern layout (search in the header, category chips, list and gallery views, sticky booking card, dark mode, phone-first).
 
 ## What works
-- **Accounts:** sign up, log in and log out with hashed passwords. Profiles cover name, neighborhood, location (rounded to about a block), battery systems, bio and photo, and each member has a public profile page with their listings. Browsing is open; posting, renting and the garage need an account. Includes CSRF protection, login lockout and a daily AI upload cap per member.
+- **Accounts:** sign up or log in with **Google**, **Microsoft** or email and password (hashed). Social sign-ins link to an existing account only when the provider verified the email (Google); a Microsoft sign-in never takes over an account by email alone. Profiles cover name, neighborhood, location (rounded to about a block), battery systems, bio and photo, and each member has a public profile page with their listings. Browsing is open; posting, renting and the garage need an account. Includes CSRF protection, login lockout and a daily AI upload cap per member.
+- **Location, with permission:** the browser asks before sharing location, on sign-up, account settings and each post. A post can use the owner's current location as its pickup spot (a second garage or shop) instead of the profile location. Coordinates are rounded to about a block and never shown.
 - **Snap-to-list:** upload photos or a walkthrough video. Video is split into frames in the browser, and duplicate frames and duplicate tools are merged. A vision model drafts the title, brand and model, category, battery system, price, deposit and safety tier for each tool.
 - **Bulk review:** edit, approve or skip every draft on one page. Chainsaws and similar tools are blocked during the pilot.
 - **Browse:** nearest first, with search, category, distance and a "fits my batteries" filter.
@@ -16,7 +17,7 @@ Same stack as the portfolio app: Flask, SQLite, Jinja templates and plain JS, wi
 - **Blob Storage:** listing and profile photos and database backups live in private Azure Blob containers, accessed with the app's managed identity (no keys). The admin page can back up the database and move older on-disk photos into Blob Storage.
 - **Model test bench (`/eval`):** 17 openly licensed garage and tool photos with expected answers. It grades each model's drafts (found the tools, right brand/category/battery, didn't over-list) and keeps run history to compare Luna, Terra, Sol and the full pipeline.
 
-Not built yet: payments and deposit holds, sign-in with Google/Microsoft/Apple, password-reset emails, messaging, ratings and maps. Seeded sample listings are labeled and can't be rented.
+Not built yet: payments (see `docs/payments-plan.md` and `docs/stripe-setup.md`), Apple sign-in, password-reset emails, messaging, ratings and maps. Seeded sample listings are labeled and can't be rented.
 
 ## Run locally
 ```bash
@@ -40,4 +41,6 @@ The database is created and seeded automatically at `instance/tools.db`. Delete 
 | `templates/`, `static/` | Pages, CSS, and the browser-side photo/video handling (`static/js/list.js`) |
 | `docs/azure-setup.md` | GPT-5.6 deployments, v1 API, costs and App Service setup |
 | `evals/` | Test photos, expected answers (`cases.json`), grader, runner, and credits (`ATTRIBUTION.md`) |
+| `deploy/` | `azure-deploy.sh` (app + storage + identity), `setup-sign-in.sh` (Microsoft app registration + Google client), `set-stripe-keys.sh` |
+| `docs/payments-plan.md`, `docs/stripe-setup.md` | Deposit recommendation, money flow, and your Stripe checklist |
 | `docs/research.md` | Market research behind the idea |

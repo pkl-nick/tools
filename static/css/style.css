@@ -270,6 +270,9 @@ label.inline { display: flex; align-items: flex-start; gap: .5rem; color: var(--
 .log li.muted { color: var(--muted); }
 .tips { padding-left: 1.1rem; font-size: .88rem; color: var(--muted); }
 
+.pickup-card { padding: .9rem 1rem; margin: 1rem 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.pickup-card .checks { margin: .3rem 0; }
+
 /* ---------- review drafts ---------- */
 .bulk-bar { position: sticky; top: 6.9rem; z-index: 5; display: flex; gap: .4rem; align-items: center; justify-content: flex-end; margin: 1rem 0; padding: .55rem .7rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
 .bulk-bar .muted { margin-right: auto; }
@@ -353,6 +356,16 @@ th { font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; color:
 .owner-card, .owner-card:visited { display: flex; align-items: center; gap: .7rem; padding: .7rem .8rem; margin-bottom: .8rem; border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); background: var(--surface); }
 .owner-card:hover { text-decoration: none; border-color: var(--border-strong); }
 .owner-card > span:last-child { display: flex; flex-direction: column; }
+
+.sso { display: flex; flex-direction: column; gap: .5rem; margin: 1rem 0 .4rem; }
+.sso-btn, .sso-btn:visited { justify-content: center; gap: .6rem; padding: .6rem 1rem; font-weight: 600; border-radius: var(--radius-sm); }
+.sso-btn svg { width: 18px; height: 18px; flex: none; }
+.sso-divider { display: flex; align-items: center; gap: .6rem; color: var(--muted); font-size: .8rem; margin: .4rem 0 .2rem; }
+.sso-divider::before, .sso-divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+.signin-methods { list-style: none; padding: 0; margin: .5rem 0 1rem; }
+.signin-methods li { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .5rem 0; border-bottom: 1px solid var(--border); }
+.signin-methods li > span { display: flex; flex-direction: column; }
+.signin-methods form { margin: 0; }
 
 /* ---------- admin ---------- */
 .admin-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }

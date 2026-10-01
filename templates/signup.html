@@ -1,10 +1,12 @@
 {% extends "base.html" %}
+{% from "macros.html" import provider_buttons with context %}
 {% block title %}sign up{% endblock %}
 {% block crumb %}<span class="sep">›</span><span>sign up</span>{% endblock %}
 {% block content %}
 <div class="auth-card">
     <h1>create your account</h1>
     <p class="lede">Rent tools from neighbors for a dollar or two a day, or earn from the gear sitting in your garage.</p>
+    {{ provider_buttons(sign_in_providers, request.args.get('next'), 'sign up') }}
     <form method="post" action="{{ url_for('signup', next=request.args.get('next')) }}">{{ csrf_field() }}
         <label>name<input name="name" value="{{ form.get('name', '') }}" autocomplete="name" maxlength="60" required></label>
         <label>email<input type="email" name="email" value="{{ form.get('email', '') }}" autocomplete="email" required></label>
@@ -35,4 +37,4 @@
     <p class="muted small center">Already have an account? <a href="{{ url_for('login', next=request.args.get('next')) }}">Log in</a></p>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='js/location.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/geo.js') }}"></script><script src="{{ url_for('static', filename='js/location.js') }}"></script>{% endblock %}

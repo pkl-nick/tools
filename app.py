@@ -3,6 +3,7 @@ from flask import (Flask, render_template, request, jsonify, session, redirect, 
 from markupsafe import Markup
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
+from authlib.integrations.flask_client import OAuth
 import os
 import re
 import hmac
@@ -46,6 +47,42 @@ app.config.update(
 )
 if ON_AZURE and app.secret_key == DEV_SECRET:
     raise RuntimeError('Set FLASK_SECRET_KEY in the App Service settings')
+
+# Google / Microsoft sign-in. A provider is offered only when its client id and secret are set.
+oauth = OAuth(app)
+OAUTH_PROVIDERS = {
+    'google': {
+        'label': 'Google',
+        'metadata': 'https://accounts.google.com/.well-known/openid-configuration',
+    },
+    'microsoft': {
+        'label': 'Microsoft',
+        # "common" accepts personal Microsoft accounts and work/school accounts
+        'metadata': 'https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration',
+    },
+}
+
+
+def provider_configured(name):
+    prefix = name.upper()
+    return bool(os.getenv(f'{prefix}_CLIENT_ID') and os.getenv(f'{prefix}_CLIENT_SECRET'))
+
+
+def enabled_providers():
+    return {k: v['label'] for k, v in OAUTH_PROVIDERS.items() if provider_configured(k)}
+
+
+def oauth_client(name):
+    client = oauth.create_client(name)
+    if client is None:
+        prefix = name.upper()
+        oauth.register(name, client_id=os.getenv(f'{prefix}_CLIENT_ID'),
+                       client_secret=os.getenv(f'{prefix}_CLIENT_SECRET'),
+                       server_metadata_url=OAUTH_PROVIDERS[name]['metadata'],
+                       client_kwargs={'scope': 'openid email profile'})
+        client = oauth.create_client(name)
+    return client
+
 
 ALLOWED_IMAGE_TYPES = {
     'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
@@ -131,12 +168,17 @@ def before_request():
     uid = session.get('user_id')
     if uid:
         g.user = get_db().execute(
-            'SELECT * FROM users WHERE id = ? AND is_demo = 0 AND password_hash IS NOT NULL', (uid,)
+            'SELECT * FROM users WHERE id = ? AND is_demo = 0', (uid,)
         ).fetchone()
         if g.user is None:
             session.pop('user_id', None)
     if 'vid' not in session:
         session['vid'] = uuid.uuid4().hex
+
+    # Accounts created through Google/Microsoft finish their profile before anything else
+    if (g.user is not None and not g.user['neighborhood'] and request.method == 'GET'
+            and request.endpoint not in ('welcome', 'logout', 'uploaded_file', 'oauth_start', 'oauth_callback')):
+        return redirect(url_for('welcome', next=request.full_path if request.query_string else request.path))
 
     if request.method == 'POST' and app.config['CSRF_ENABLED']:
         sent = request.form.get('_csrf') or request.headers.get('X-CSRF-Token') or ''
@@ -246,6 +288,7 @@ def inject_globals():
         'csrf_field': csrf_field,
         'is_admin': is_admin(),
         'area_name': os.getenv('SERVICE_AREA_NAME', 'denver'),
+        'sign_in_providers': enabled_providers(),
     }
 
 
@@ -258,7 +301,8 @@ def parse_date(value):
 
 def get_listed_tool(tool_id):
     tool = get_db().execute(
-        '''SELECT t.*, u.name AS owner_name, u.neighborhood, u.lat, u.lng, u.avatar_path AS owner_avatar,
+        '''SELECT t.*, u.name AS owner_name, u.neighborhood,
+                  COALESCE(t.pickup_lat, u.lat) AS lat, COALESCE(t.pickup_lng, u.lng) AS lng, u.avatar_path AS owner_avatar,
                   u.is_demo AS owner_is_demo, u.created_at AS owner_since
            FROM tools t JOIN users u ON t.owner_id = u.id
            WHERE t.id = ? AND t.status = 'listed' ''', (tool_id,)
@@ -430,8 +474,10 @@ def account():
         flash('Profile saved.', 'success')
         return redirect(url_for('account'))
     listings = db.execute("SELECT COUNT(*) FROM tools WHERE owner_id = ? AND status = 'listed'", (g.user['id'],)).fetchone()[0]
+    linked = {r['provider']: r for r in db.execute('SELECT * FROM identities WHERE user_id = ?', (g.user['id'],))}
     return render_template('account.html', platforms=listing_utils.BATTERY_PLATFORMS,
-                           my_platforms=user_platforms(g.user), listings=listings, min_password=MIN_PASSWORD)
+                           my_platforms=user_platforms(g.user), listings=listings, min_password=MIN_PASSWORD,
+                           linked=linked, has_password=bool(g.user['password_hash']))
 
 
 @app.route('/account/avatar', methods=['POST'])
@@ -467,7 +513,7 @@ def account_avatar():
 @login_required
 def account_password():
     current, new = request.form.get('current_password', ''), request.form.get('new_password', '')
-    if not check_password_hash(g.user['password_hash'], current):
+    if g.user['password_hash'] and not check_password_hash(g.user['password_hash'], current):
         flash('Your current password isn\'t right.', 'error')
     elif len(new) < MIN_PASSWORD:
         flash(f'Use a new password of at least {MIN_PASSWORD} characters.', 'error')
@@ -499,6 +545,141 @@ def profile(user_id):
                            platforms=user_platforms(person))
 
 
+@app.route('/welcome', methods=['GET', 'POST'])
+@login_required
+def welcome():
+    """Finish a profile that was started with Google or Microsoft"""
+    if request.method == 'POST':
+        neighborhood = request.form.get('neighborhood', '').strip()[:60]
+        if not neighborhood:
+            flash('Enter your neighborhood so renters know roughly where tools are.', 'error')
+            return redirect(url_for('welcome', next=request.args.get('next')))
+        lat, lng = parse_location(request.form) or (g.user['lat'], g.user['lng'])
+        db = get_db()
+        db.execute('UPDATE users SET neighborhood = ?, lat = ?, lng = ?, battery_platforms = ? WHERE id = ?',
+                   (neighborhood, lat, lng, selected_platforms(request.form), g.user['id']))
+        track(db, 'profile_completed', user_id=g.user['id'], located=parse_location(request.form) is not None)
+        db.commit()
+        flash(f"You're all set, {g.user['name']}.", 'success')
+        return redirect(safe_next(request.args.get('next')))
+    return render_template('welcome.html', platforms=listing_utils.BATTERY_PLATFORMS)
+
+
+# ---------------------------------------------------------------------------
+# Google / Microsoft sign-in (OpenID Connect)
+# ---------------------------------------------------------------------------
+
+@app.route('/auth/<provider>')
+def oauth_start(provider):
+    if provider not in enabled_providers():
+        abort(404)
+    session['oauth_next'] = safe_next(request.args.get('next'))
+    session['oauth_link'] = bool(g.user) and request.args.get('link') == '1'
+    redirect_uri = url_for('oauth_callback', provider=provider, _external=True)
+    return oauth_client(provider).authorize_redirect(redirect_uri, prompt='select_account')
+
+
+def microsoft_issuer_ok(claims):
+    """The "common" endpoint serves every tenant, so the issuer must match the token's own tenant id"""
+    tid = claims.get('tid', '')
+    return bool(tid) and claims.get('iss') == f'https://login.microsoftonline.com/{tid}/v2.0'
+
+
+@app.route('/auth/<provider>/callback')
+def oauth_callback(provider):
+    if provider not in enabled_providers():
+        abort(404)
+    db = get_db()
+    next_url = session.pop('oauth_next', url_for('browse'))
+    linking = session.pop('oauth_link', False)
+    label = OAUTH_PROVIDERS[provider]['label']
+    try:
+        options = {'iss': {'essential': True}} if provider == 'microsoft' else None
+        token = oauth_client(provider).authorize_access_token(claims_options=options)
+        info = token.get('userinfo') or {}
+        if provider == 'microsoft' and not microsoft_issuer_ok(info):
+            raise ValueError('unexpected token issuer')
+        subject = info['sub']
+    except Exception as e:
+        print(f'{provider} sign-in failed: {e}')
+        track(db, 'oauth_failed', visitor=visitor_id(), provider=provider)
+        db.commit()
+        flash(f"{label} sign-in didn't complete. Please try again.", 'error')
+        return redirect(url_for('login'))
+
+    email = (info.get('email') or (info.get('preferred_username') if provider == 'microsoft' else '') or '').strip().lower()
+    if not EMAIL_RE.match(email):
+        email = ''
+    # Only Google asserts it verified the address. Microsoft tenants can set arbitrary emails,
+    # so a Microsoft sign-in never takes over an existing account by email alone.
+    email_verified = provider == 'google' and info.get('email_verified') is True
+    now = datetime.now().isoformat(timespec='seconds')
+
+    def link(user_id):
+        db.execute('INSERT OR IGNORE INTO identities (user_id, provider, subject, email, created_at) VALUES (?, ?, ?, ?, ?)',
+                   (user_id, provider, subject, email, now))
+
+    known = db.execute('SELECT user_id FROM identities WHERE provider = ? AND subject = ?', (provider, subject)).fetchone()
+    if linking and g.user:
+        if known and known['user_id'] != g.user['id']:
+            flash(f'That {label} account is already connected to a different toolshare account.', 'error')
+        else:
+            link(g.user['id'])
+            track(db, 'oauth_linked', user_id=g.user['id'], provider=provider)
+            db.commit()
+            flash(f'{label} sign-in connected.', 'success')
+        return redirect(url_for('account'))
+
+    if known:
+        user = db.execute('SELECT * FROM users WHERE id = ? AND is_demo = 0', (known['user_id'],)).fetchone()
+    else:
+        user = None
+        if email:
+            user = db.execute('SELECT * FROM users WHERE email = ? COLLATE NOCASE AND is_demo = 0', (email,)).fetchone()
+        if user and not email_verified:
+            flash(f'An account with {email} already exists. Log in with your password, then connect {label} '
+                  'from account settings.', 'error')
+            return redirect(url_for('login'))
+        if user:
+            link(user['id'])
+        else:
+            if not email:
+                flash(f"Your {label} account didn't share an email address, so we can't create an account with it.", 'error')
+                return redirect(url_for('signup'))
+            name = (info.get('name') or email.split('@')[0]).strip()[:60]
+            lat, lng = db_builder.DEMO_CENTER
+            cur = db.execute(
+                "INSERT INTO users (name, email, password_hash, neighborhood, lat, lng, battery_platforms, "
+                "is_demo, created_at, last_login_at) VALUES (?, ?, NULL, '', ?, ?, '', 0, ?, ?)",
+                (name, email, lat, lng, now, now))
+            user = db.execute('SELECT * FROM users WHERE id = ?', (cur.lastrowid,)).fetchone()
+            link(user['id'])
+            track(db, 'signup', user_id=user['id'], visitor=visitor_id(), method=provider)
+    if user is None:
+        abort(404)
+    db.execute('UPDATE users SET last_login_at = ? WHERE id = ?', (now, user['id']))
+    track(db, 'login', user_id=user['id'], visitor=visitor_id(), method=provider)
+    db.commit()
+    log_in(user)
+    return redirect(next_url)
+
+
+@app.route('/auth/<provider>/disconnect', methods=['POST'])
+@login_required
+def oauth_disconnect(provider):
+    db = get_db()
+    others = db.execute('SELECT COUNT(*) FROM identities WHERE user_id = ? AND provider != ?',
+                        (g.user['id'], provider)).fetchone()[0]
+    if not g.user['password_hash'] and not others:
+        flash('Set a password first, so you can still log in after disconnecting.', 'error')
+        return redirect(url_for('account'))
+    db.execute('DELETE FROM identities WHERE user_id = ? AND provider = ?', (g.user['id'], provider))
+    track(db, 'oauth_unlinked', user_id=g.user['id'], provider=provider)
+    db.commit()
+    flash(f"{OAUTH_PROVIDERS.get(provider, {}).get('label', provider)} sign-in disconnected.", 'success')
+    return redirect(url_for('account'))
+
+
 # ---------------------------------------------------------------------------
 # Browse and rent
 # ---------------------------------------------------------------------------
@@ -515,7 +696,8 @@ def browse():
     except ValueError:
         max_miles = 10.0
 
-    sql = '''SELECT t.*, u.name AS owner_name, u.neighborhood, u.lat, u.lng, u.is_demo AS owner_is_demo
+    sql = '''SELECT t.*, u.name AS owner_name, u.neighborhood,
+                  COALESCE(t.pickup_lat, u.lat) AS lat, COALESCE(t.pickup_lng, u.lng) AS lng, u.is_demo AS owner_is_demo
              FROM tools t JOIN users u ON t.owner_id = u.id
              WHERE t.status = 'listed' '''
     params = []
@@ -650,7 +832,8 @@ def book_tool(tool_id):
 @login_required
 def list_tools():
     """Upload garage photos to get AI-drafted listings"""
-    return render_template('list.html')
+    located = (g.user['lat'], g.user['lng']) != tuple(db_builder.DEMO_CENTER)
+    return render_template('list.html', profile_located=located)
 
 
 def uploads_today(user_id):
@@ -717,11 +900,15 @@ def analyze_photo():
         except Exception as e:
             print(f'Photo storage failed: {e}')
             return jsonify({'success': False, 'error': 'Couldn\'t save the photo. Please try again.'}), 502
+    # Pickup spot chosen on the post page (current location, with permission); blank = profile location
+    pickup = parse_location({'lat': request.form.get('pickup_lat', ''), 'lng': request.form.get('pickup_lng', '')})
     for draft in created:
-        db_builder.insert_tool(db, owner_id=user['id'], status='draft', photo_path=photo_key,
-                               batch_id=batch_id, **draft)
+        db_builder.insert_tool(db, owner_id=user['id'], status='draft', photo_path=photo_key, batch_id=batch_id,
+                               pickup_lat=pickup[0] if pickup else None, pickup_lng=pickup[1] if pickup else None,
+                               **draft)
     track(db, 'photo_analyzed', user_id=user['id'], value=round(cost, 5), duration=seconds,
-          source=source, model=model_used, drafts=len(created), duplicates=len(drafts) - len(created), demo=demo_mode)
+          source=source, model=model_used, drafts=len(created), duplicates=len(drafts) - len(created), demo=demo_mode,
+          pickup='current' if pickup else 'profile')
     db.commit()
 
     return jsonify({

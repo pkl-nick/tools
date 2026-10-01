@@ -14,6 +14,41 @@
     const log = document.getElementById('log');
     const reviewBtn = document.getElementById('reviewBtn');
 
+    // Pickup spot: profile location, or the device's current location (asks permission on first use)
+    const pickupStatus = document.getElementById('pickupStatus');
+    let pickup = null;
+
+    async function useCurrentLocation() {
+        pickupStatus.textContent = 'Asking your browser for your location…';
+        try {
+            pickup = await window.toolshareGeo.request();
+            pickupStatus.textContent = '✓ These tools will show up for renters near where you are now (rounded to about a block).';
+        } catch (e) {
+            pickup = null;
+            pickupStatus.textContent = e.message + ' Your profile location will be used instead.';
+            const profile = document.querySelector('input[name="pickup"][value="profile"]');
+            if (profile) profile.checked = true;
+        }
+    }
+
+    function pickupMode() {
+        const checked = document.querySelector('input[name="pickup"]:checked');
+        return checked ? checked.value : 'profile';
+    }
+
+    document.querySelectorAll('input[name="pickup"]').forEach((r) => r.addEventListener('change', () => {
+        if (r.value === 'current' && r.checked) useCurrentLocation();
+        if (r.value === 'profile' && r.checked) {
+            pickup = null;
+            pickupStatus.textContent = 'Using your profile location.';
+        }
+    }));
+
+    // Make sure the location question is answered before the first upload
+    async function ensurePickup() {
+        if (pickupMode() === 'current' && !pickup) await useCurrentLocation();
+    }
+
     const newBatchId = () =>
         (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
 
@@ -122,6 +157,10 @@
             body.append('photo', items[i].blob, `upload-${i}.jpg`);
             body.append('batch_id', batchId);
             body.append('source', source);   // video frames use the cheaper model
+            if (pickup) {
+                body.append('pickup_lat', pickup.lat);
+                body.append('pickup_lng', pickup.lng);
+            }
             try {
                 const res = await fetch('/api/analyze-photo', { method: 'POST', body, headers: { 'X-CSRF-Token': CSRF } });
                 const data = await res.json();
@@ -151,6 +190,7 @@
         const files = Array.from(e.target.files);
         if (!files.length) return;
         reset();
+        await ensurePickup();
         setProgress(0, files.length, 'Preparing photos...');
         const items = [];
         for (const f of files) items.push({ blob: await imageFileToJpeg(f), label: f.name });
@@ -162,6 +202,7 @@
         const file = e.target.files[0];
         if (!file) return;
         reset();
+        await ensurePickup();
         setProgress(0, 0, 'Loading video...');
         try {
             const frames = await extractFrames(file);
