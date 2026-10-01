@@ -103,7 +103,7 @@ The script registers an app in your Microsoft Entra directory, open to both pers
   RESET_MICROSOFT_SECRET=1 bash setup-sign-in.sh
   ```
 
-- [ ] **2.3** Verify: open `/login` in a private window and check there's a **Sign in with Microsoft** button. Sign in with a personal Outlook/Hotmail account. You should land on the "one more step" page asking for neighborhood and ZIP.
+- [ ] **2.3** Verify: open `/login` in a private window and check there's a **continue with Microsoft** button. Sign in with a personal Outlook/Hotmail account. You should land on the "one more step" page asking for neighborhood and ZIP.
 
 ---
 
