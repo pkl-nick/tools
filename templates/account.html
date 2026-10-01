@@ -7,7 +7,7 @@
     {{ avatar(current_user, 'lg') }}
     <div>
         <h1>{{ current_user.name }}</h1>
-        <p class="muted">{{ current_user.neighborhood }} · member since {{ (current_user.created_at or '')[:10] }} · {{ listings }} tool{{ 's' if listings != 1 }} listed ·
+        <p class="muted">{{ place_label(current_user) }} · member since {{ (current_user.created_at or '')[:10] }} · {{ listings }} tool{{ 's' if listings != 1 }} listed ·
             <a href="{{ url_for('profile', user_id=current_user.id) }}">view public profile</a></p>
     </div>
 </div>
@@ -20,6 +20,8 @@
                 <label>name<input name="name" value="{{ current_user.name }}" maxlength="60" required></label>
                 <label>neighborhood<input name="neighborhood" value="{{ current_user.neighborhood }}" maxlength="60" required></label>
             </div>
+            <label>ZIP code<input name="postal_code" value="{{ current_user.postal_code or '' }}" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" required>
+                <span class="hint">{% if current_user.city %}{{ current_user.city }}, {{ current_user.region }}. {% endif %}Tells neighbors which Capitol Hill you mean.</span></label>
             <label>email<input type="email" name="email" value="{{ current_user.email }}" required>
                 <span class="hint">used to log in; never shown to other members</span></label>
             <label>about you<textarea name="bio" rows="3" maxlength="500" placeholder="What kind of projects do you do? What gear do you have?">{{ current_user.bio }}</textarea></label>
@@ -37,6 +39,15 @@
                     <label class="inline chip-check"><input type="checkbox" name="battery_platforms" value="{{ p }}" {{ 'checked' if p in my_platforms }}> {{ p }}</label>
                     {% endfor %}
                 </div>
+            </div>
+            <div class="field">
+                <span class="field-label">delivery <span class="hint">(private)</span></span>
+                <label class="inline"><input type="checkbox" name="offers_delivery" value="1" {{ 'checked' if current_user.offers_delivery }}> I can drop tools off myself (for a delivery fee)</label>
+                <div class="row">
+                    <label>street address<input name="street_address" value="{{ current_user.street_address or '' }}" maxlength="120" autocomplete="street-address" placeholder="123 Main St"></label>
+                    <label>mobile phone<input type="tel" name="phone" value="{{ current_user.phone or '' }}" autocomplete="tel" placeholder="(303) 555-0100"></label>
+                </div>
+                <span class="hint">Only shared with a courier on a delivery you book or accept. Add both to let renters choose courier delivery for tools that fit in a car.</span>
             </div>
             <button type="submit" class="btn btn-primary">save profile</button>
         </form>

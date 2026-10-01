@@ -90,6 +90,10 @@ The deploy script also:
 
 Role assignments can take a few minutes to take effect, so photo uploads may fail briefly right after the first run. Photos uploaded before this change stay on the web server's disk and keep working. The admin page has a button to move them into Blob Storage.
 
+## Azure Maps
+
+The deploy script creates an Azure Maps account, `toolshare-maps` (Gen2), in `nick-portfolio-rg`. It gives the web app's managed identity *Azure Maps Data Reader* and sets `AZURE_MAPS_CLIENT_ID`. The app turns ZIP codes into city, state and a center point, and turns courier addresses into exact pins. No key is stored. See `docs/delivery.md`.
+
 ## Test bench
 
 The deploy script creates an `EVAL_KEY` app setting and prints a private link: `https://<app>.azurewebsites.net/eval?key=...`. Open it, tick the models to compare and press **run all**. Each case is run one request at a time, so a Sol run takes a few minutes. Results are saved and can be reopened under **previous runs**.

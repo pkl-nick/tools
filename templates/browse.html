@@ -46,6 +46,15 @@
     <h1>{{ ('"' ~ q ~ '"') if q else (category | lower if category else 'tools for rent') }}</h1>
     <span class="muted small">{{ tools | length }} result{{ 's' if tools | length != 1 }} · closest first{% if my_platforms %} · your batteries: {{ my_platforms | join(', ') }}{% endif %}</span>
 </div>
+{% if not current_user %}
+<form class="area-form" method="post" action="{{ url_for('set_area') }}" id="areaForm">{{ csrf_field() }}
+    <span class="muted small">searching near <b>{{ (visitor_area.city ~ (', ' ~ visitor_area.region if visitor_area.region else '')) if visitor_area else area_name }}</b>{% if visitor_area and visitor_area.postal_code %} ({{ visitor_area.postal_code }}){% endif %} ·</span>
+    <input name="postal_code" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="ZIP" aria-label="ZIP code">
+    <input type="hidden" name="lat" value=""><input type="hidden" name="lng" value="">
+    <button class="btn btn-small" type="submit">go</button>
+    <button class="btn btn-small" type="button" id="areaHere">use my location</button>
+</form>
+{% endif %}
 
 {% if tools %}
 <ul class="results {{ 'gallery' if view == 'gallery' }}">
@@ -61,7 +70,7 @@
         <div class="result-main">
             <a class="result-title" href="{{ url_for('tool_detail', tool_id=t.id) }}">{{ t.name }}</a>
             <div class="result-meta">
-                <span>{{ t.neighborhood | lower }}</span><span>{{ t.miles }} mi</span><span>{{ t.category | lower }}</span>
+                <span>{{ place_label(t) | lower }}</span><span>{{ t.miles }} mi</span><span>{{ t.category | lower }}</span>
             </div>
             <div class="tags">
                 {% if t.battery_platform %}
@@ -83,3 +92,5 @@
 </div>
 {% endif %}
 {% endblock %}
+
+{% block scripts %}<script src="{{ url_for('static', filename='js/geo.js') }}"></script><script src="{{ url_for('static', filename='js/area.js') }}"></script>{% endblock %}

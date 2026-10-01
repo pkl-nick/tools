@@ -20,6 +20,8 @@ from datetime import date, datetime, timedelta
 import db_builder
 import listing_utils
 import metrics
+import places
+import delivery
 import storage
 from telemetry import track
 from evals import runner as eval_runner
@@ -160,6 +162,9 @@ def visitor_id():
     return session.get('vid')
 
 
+CSRF_EXEMPT = {'uber_direct_webhook'}     # verified by signature instead
+
+
 @app.before_request
 def before_request():
     if request.endpoint == 'static':
@@ -176,11 +181,11 @@ def before_request():
         session['vid'] = uuid.uuid4().hex
 
     # Accounts created through Google/Microsoft finish their profile before anything else
-    if (g.user is not None and not g.user['neighborhood'] and request.method == 'GET'
+    if (g.user is not None and not (g.user['neighborhood'] and g.user['postal_code']) and request.method == 'GET'
             and request.endpoint not in ('welcome', 'logout', 'uploaded_file', 'oauth_start', 'oauth_callback')):
         return redirect(url_for('welcome', next=request.full_path if request.query_string else request.path))
 
-    if request.method == 'POST' and app.config['CSRF_ENABLED']:
+    if request.method == 'POST' and app.config['CSRF_ENABLED'] and request.endpoint not in CSRF_EXEMPT:
         sent = request.form.get('_csrf') or request.headers.get('X-CSRF-Token') or ''
         if not session.get('csrf') or not hmac.compare_digest(sent, session['csrf']):
             if request.path.startswith('/api/'):
@@ -256,7 +261,17 @@ def viewer_location():
     """Logged-in users measure distance from their own location; visitors from the service area center"""
     if g.get('user'):
         return g.user['lat'], g.user['lng']
+    area = session.get('area')
+    if area:
+        return area['lat'], area['lng']
     return db_builder.DEMO_CENTER
+
+
+def visitor_area_name():
+    area = session.get('area')
+    if area:
+        return area['city'] or area['postal_code']
+    return os.getenv('SERVICE_AREA_NAME', 'denver')
 
 
 @app.template_filter('money')
@@ -287,8 +302,10 @@ def inject_globals():
         'csrf_token': csrf_token,
         'csrf_field': csrf_field,
         'is_admin': is_admin(),
-        'area_name': os.getenv('SERVICE_AREA_NAME', 'denver'),
+        'area_name': visitor_area_name(),
+        'visitor_area': session.get('area'),
         'sign_in_providers': enabled_providers(),
+        'place_label': place_label,
     }
 
 
@@ -301,9 +318,10 @@ def parse_date(value):
 
 def get_listed_tool(tool_id):
     tool = get_db().execute(
-        '''SELECT t.*, u.name AS owner_name, u.neighborhood,
+        '''SELECT t.*, u.name AS owner_name, u.neighborhood, u.city, u.region,
                   COALESCE(t.pickup_lat, u.lat) AS lat, COALESCE(t.pickup_lng, u.lng) AS lng, u.avatar_path AS owner_avatar,
-                  u.is_demo AS owner_is_demo, u.created_at AS owner_since
+                  u.is_demo AS owner_is_demo, u.created_at AS owner_since, u.offers_delivery AS owner_offers_delivery,
+                  u.street_address AS owner_street, u.phone AS owner_phone, u.postal_code AS owner_postal
            FROM tools t JOIN users u ON t.owner_id = u.id
            WHERE t.id = ? AND t.status = 'listed' ''', (tool_id,)
     ).fetchone()
@@ -323,15 +341,64 @@ def has_overlap(tool_id, start, end, exclude_booking_id=None):
     return row[0] > 0
 
 
-def build_quote(tool, start, end, delivery, hour):
+def owner_delivers(tool, miles):
+    return bool(tool['owner_offers_delivery']) and miles <= listing_utils.DELIVERY_MAX_MILES
+
+
+def courier_available(tool):
+    """Uber Direct is set up, the tool fits in a car, and the owner gave a pickup address and phone"""
+    return (delivery.configured() and not tool['owner_is_demo']
+            and delivery.courier_eligible(tool['courier_size'], tool['weight_lbs'])
+            and bool(tool['owner_street'] and tool['owner_phone'] and tool['owner_postal']))
+
+
+def build_quote(tool, start, end, method, hour, courier_fee=None):
+    """method: pickup | owner (owner drives it over) | courier (Uber Direct, round trip)"""
     lat, lng = viewer_location()
     miles = listing_utils.distance_miles(lat, lng, tool['lat'], tool['lng'])
     days = listing_utils.rental_days(start, end)
     result = listing_utils.quote(tool['daily_price'], tool['deposit'], days,
-                                 delivery=delivery, miles=miles, hour=hour)
+                                 delivery=method != 'pickup', miles=miles, hour=hour,
+                                 delivery_fee_override=courier_fee if method == 'courier' else None,
+                                 delivery_to_owner=method == 'owner')
     result['miles'] = round(miles, 1)
-    result['delivery_available'] = miles <= listing_utils.DELIVERY_MAX_MILES
+    result['method'] = method
+    result['delivery_available'] = owner_delivers(tool, miles)
     return result
+
+
+def owner_place(tool):
+    """Where a courier picks the tool up"""
+    return {'name': tool['owner_name'], 'phone': tool['owner_phone'], 'street': tool['owner_street'],
+            'city': tool['city'] or '', 'region': tool['region'] or '', 'postal_code': tool['owner_postal'],
+            'lat': tool['lat'], 'lng': tool['lng']}
+
+
+def dropoff_from_form(form, user):
+    """Renter's delivery address -> (place, error). Geocoded so the courier gets an exact pin."""
+    street = form.get('dropoff_street', '').strip()[:120]
+    city = form.get('dropoff_city', '').strip()[:60]
+    region = form.get('dropoff_region', '').strip().upper()[:2]
+    postal = form.get('dropoff_postal', '').strip()[:5]
+    phone = normalize_phone(form.get('renter_phone', '') or user['phone'] or '')
+    if not street or not city or len(region) != 2 or not places.ZIP_RE.match(postal):
+        return None, 'Enter the full delivery address: street, city, state and ZIP.'
+    if not phone:
+        return None, 'Enter a mobile number for the courier to text.'
+    found = places.lookup_address(street, city, region, postal)
+    if found is None and places.configured():
+        return None, "We couldn't find that address. Check it and try again."
+    return {'name': user['name'], 'phone': phone, 'street': street, 'city': city, 'region': region,
+            'postal_code': postal, 'lat': found['lat'] if found else None,
+            'lng': found['lng'] if found else None}, None
+
+
+def courier_round_trip(tool, dropoff):
+    """Uber's price for delivery and return, plus our markup, in dollars"""
+    pickup = owner_place(tool)
+    out = delivery.quote(pickup, dropoff)
+    back = delivery.quote(dropoff, pickup)
+    return delivery.renter_price_cents(out['fee_cents'] + back['fee_cents']) / 100, out
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +420,60 @@ def selected_platforms(form):
     return ','.join(p for p in form.getlist('battery_platforms') if p in listing_utils.BATTERY_PLATFORMS)
 
 
+def resolve_home(form, user=None):
+    """
+    ZIP code -> city/state and a default location (the ZIP's center). Browser location, when the
+    person shares it, refines the coordinates. Returns (fields, error).
+    """
+    postal = form.get('postal_code', '').strip()[:5]
+    if not places.ZIP_RE.match(postal):
+        return None, 'Enter your 5-digit ZIP code.'
+    place = places.lookup_zip(postal)
+    if place is None and places.configured():
+        return None, "We couldn't find that ZIP code. Check it and try again."
+    located = parse_location(form)
+    zip_changed = not user or user['postal_code'] != postal
+    if located:
+        lat, lng = located
+    elif place and zip_changed:
+        lat, lng = place['lat'], place['lng']
+    elif user:
+        lat, lng = user['lat'], user['lng']
+    else:
+        lat, lng = (place['lat'], place['lng']) if place else db_builder.DEMO_CENTER
+    city = place['city'] if place else (user['city'] if user and not zip_changed else '')
+    region = place['region'] if place else (user['region'] if user and not zip_changed else '')
+    return {'postal_code': postal, 'city': city or '', 'region': region or '',
+            'lat': round(lat, 3), 'lng': round(lng, 3)}, None
+
+
+PHONE_DIGITS = re.compile(r'\D')
+
+
+def normalize_phone(raw):
+    """US phone -> E.164 (+15551234567), which couriers need. None when it isn't a US number."""
+    digits = PHONE_DIGITS.sub('', raw or '')
+    if len(digits) == 11 and digits.startswith('1'):
+        digits = digits[1:]
+    return f'+1{digits}' if len(digits) == 10 and digits[0] not in '01' else None
+
+
+def courier_details(form):
+    """Private details only shared with a courier: street address and phone. Returns (fields, error)."""
+    street = form.get('street_address', '').strip()[:120]
+    raw_phone = form.get('phone', '').strip()
+    phone = normalize_phone(raw_phone) if raw_phone else ''
+    if phone is None:
+        return None, 'Enter a 10-digit US phone number.'
+    return {'street_address': street, 'phone': phone,
+            'offers_delivery': 1 if form.get('offers_delivery') else 0}, None
+
+
+def place_label(person):
+    """"Capitol Hill · Seattle, WA" """
+    return places.describe(person['neighborhood'], person['city'], person['region'])
+
+
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
     if g.user:
@@ -372,6 +493,9 @@ def signup():
             errors.append(f'Use a password of at least {MIN_PASSWORD} characters.')
         if not neighborhood:
             errors.append('Enter your neighborhood so renters know roughly where tools are.')
+        home, home_error = resolve_home(form)
+        if home_error:
+            errors.append(home_error)
         db = get_db()
         if not errors and db.execute('SELECT 1 FROM users WHERE email = ? COLLATE NOCASE', (email,)).fetchone():
             errors.append('An account with that email already exists. Try logging in.')
@@ -380,15 +504,14 @@ def signup():
                 flash(e, 'error')
             return render_template('signup.html', form=form, platforms=listing_utils.BATTERY_PLATFORMS), 400
 
-        lat, lng = parse_location(form) or db_builder.DEMO_CENTER
         now = datetime.now().isoformat(timespec='seconds')
         try:
             cur = db.execute(
-                '''INSERT INTO users (name, email, password_hash, neighborhood, lat, lng, battery_platforms,
-                                      is_demo, created_at, last_login_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)''',
-                (name, email, generate_password_hash(password), neighborhood, lat, lng,
-                 selected_platforms(form), now, now))
+                '''INSERT INTO users (name, email, password_hash, neighborhood, lat, lng, postal_code, city, region,
+                                      battery_platforms, is_demo, created_at, last_login_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)''',
+                (name, email, generate_password_hash(password), neighborhood, home['lat'], home['lng'],
+                 home['postal_code'], home['city'], home['region'], selected_platforms(form), now, now))
         except sqlite3.IntegrityError:
             flash('An account with that email already exists. Try logging in.', 'error')
             return render_template('signup.html', form=form, platforms=listing_utils.BATTERY_PLATFORMS), 400
@@ -465,10 +588,19 @@ def account():
             for e in errors:
                 flash(e, 'error')
             return redirect(url_for('account'))
-        lat, lng = parse_location(form) or (g.user['lat'], g.user['lng'])
+        home, home_error = resolve_home(form, g.user)
+        courier, courier_error = courier_details(form)
+        for e in (home_error, courier_error):
+            if e:
+                flash(e, 'error')
+        if home_error or courier_error:
+            return redirect(url_for('account'))
         db.execute('''UPDATE users SET name = ?, email = ?, neighborhood = ?, bio = ?, battery_platforms = ?,
-                                       lat = ?, lng = ? WHERE id = ?''',
-                   (name, email, neighborhood, bio, selected_platforms(form), lat, lng, g.user['id']))
+                                       lat = ?, lng = ?, postal_code = ?, city = ?, region = ?,
+                                       street_address = ?, phone = ?, offers_delivery = ? WHERE id = ?''',
+                   (name, email, neighborhood, bio, selected_platforms(form), home['lat'], home['lng'],
+                    home['postal_code'], home['city'], home['region'], courier['street_address'], courier['phone'],
+                    courier['offers_delivery'], g.user['id']))
         track(db, 'profile_updated', user_id=g.user['id'], located=parse_location(form) is not None)
         db.commit()
         flash('Profile saved.', 'success')
@@ -554,10 +686,15 @@ def welcome():
         if not neighborhood:
             flash('Enter your neighborhood so renters know roughly where tools are.', 'error')
             return redirect(url_for('welcome', next=request.args.get('next')))
-        lat, lng = parse_location(request.form) or (g.user['lat'], g.user['lng'])
+        home, home_error = resolve_home(request.form, g.user)
+        if home_error:
+            flash(home_error, 'error')
+            return redirect(url_for('welcome', next=request.args.get('next')))
         db = get_db()
-        db.execute('UPDATE users SET neighborhood = ?, lat = ?, lng = ?, battery_platforms = ? WHERE id = ?',
-                   (neighborhood, lat, lng, selected_platforms(request.form), g.user['id']))
+        db.execute('''UPDATE users SET neighborhood = ?, lat = ?, lng = ?, postal_code = ?, city = ?, region = ?,
+                                       battery_platforms = ? WHERE id = ?''',
+                   (neighborhood, home['lat'], home['lng'], home['postal_code'], home['city'], home['region'],
+                    selected_platforms(request.form), g.user['id']))
         track(db, 'profile_completed', user_id=g.user['id'], located=parse_location(request.form) is not None)
         db.commit()
         flash(f"You're all set, {g.user['name']}.", 'success')
@@ -696,7 +833,7 @@ def browse():
     except ValueError:
         max_miles = 10.0
 
-    sql = '''SELECT t.*, u.name AS owner_name, u.neighborhood,
+    sql = '''SELECT t.*, u.name AS owner_name, u.neighborhood, u.city, u.region,
                   COALESCE(t.pickup_lat, u.lat) AS lat, COALESCE(t.pickup_lng, u.lng) AS lng, u.is_demo AS owner_is_demo
              FROM tools t JOIN users u ON t.owner_id = u.id
              WHERE t.status = 'listed' '''
@@ -734,6 +871,27 @@ def browse():
                            platforms=listing_utils.BATTERY_PLATFORMS, my_platforms=my_platforms)
 
 
+
+@app.route('/area', methods=['POST'])
+def set_area():
+    """Visitors without an account pick where to search, by ZIP or by sharing their location"""
+    located = parse_location(request.form)
+    postal = request.form.get('postal_code', '').strip()[:5]
+    if located:
+        session['area'] = {'postal_code': '', 'city': 'near you', 'region': '', 'lat': located[0], 'lng': located[1]}
+    elif places.ZIP_RE.match(postal):
+        place = places.lookup_zip(postal)
+        if place is None and places.configured():
+            flash("We couldn't find that ZIP code.", 'error')
+            return redirect(url_for('browse'))
+        lat, lng = (place['lat'], place['lng']) if place else db_builder.DEMO_CENTER
+        session['area'] = {'postal_code': postal, 'city': place['city'] if place else '',
+                           'region': place['region'] if place else '', 'lat': lat, 'lng': lng}
+    else:
+        flash('Enter a 5-digit ZIP code.', 'error')
+    return redirect(url_for('browse'))
+
+
 @app.route('/tool/<int:tool_id>')
 def tool_detail(tool_id):
     tool = get_listed_tool(tool_id)
@@ -756,7 +914,9 @@ def tool_detail(tool_id):
     return render_template('tool.html', tool=tool, miles=round(miles, 1), booked=booked, addons=addons,
                            today=date.today().isoformat(),
                            fits_my_batteries=tool['battery_platform'] in user_platforms(g.user),
-                           delivery_max=listing_utils.DELIVERY_MAX_MILES)
+                           delivery_max=listing_utils.DELIVERY_MAX_MILES,
+                           owner_delivers=owner_delivers(tool, miles), courier_ok=courier_available(tool),
+                           courier_test_mode=not delivery.live_enabled())
 
 
 @app.route('/api/quote')
@@ -767,9 +927,40 @@ def api_quote():
     end = parse_date(request.args.get('end'))
     if not start or not end or end < start:
         return jsonify({'success': False, 'error': 'Pick a valid start and return date'}), 400
-    delivery = request.args.get('delivery') == '1'
+    method = request.args.get('method') or ('owner' if request.args.get('delivery') == '1' else 'pickup')
+    if method not in ('pickup', 'owner'):
+        method = 'pickup'     # courier prices need an address: /api/courier-quote
     hour = request.args.get('hour', 10, type=int) % 24
-    return jsonify({'success': True, **build_quote(tool, start, end, delivery, hour)})
+    return jsonify({'success': True, **build_quote(tool, start, end, method, hour)})
+
+
+@app.route('/api/courier-quote', methods=['POST'])
+@login_required
+def api_courier_quote():
+    """Price a round-trip Uber Direct courier to the renter's address"""
+    tool = get_listed_tool(request.form.get('tool_id', type=int))
+    start, end = parse_date(request.form.get('start')), parse_date(request.form.get('end'))
+    if not start or not end or end < start:
+        return jsonify({'success': False, 'error': 'Pick a valid start and return date'}), 400
+    if not courier_available(tool):
+        return jsonify({'success': False, 'error': 'Courier delivery isn\'t available for this tool.'}), 400
+    key = f'courier-quote:{g.user["id"]}'
+    if too_many_failures(key, 30):
+        return jsonify({'success': False, 'error': 'Too many quotes. Try again in a few minutes.'}), 429
+    record_failure(key)       # counts every quote, not just failures
+    dropoff, error = dropoff_from_form(request.form, g.user)
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
+    try:
+        fee, out = courier_round_trip(tool, dropoff)
+    except delivery.DeliveryError as e:
+        return jsonify({'success': False, 'error': f'Uber couldn\'t quote this trip: {e}'}), 400
+    except Exception as e:
+        print(f'Courier quote failed: {e}')
+        return jsonify({'success': False, 'error': 'Couldn\'t reach the courier service. Try again.'}), 502
+    hour = request.form.get('hour', 10, type=int) % 24
+    q = build_quote(tool, start, end, 'courier', hour, courier_fee=fee)
+    return jsonify({'success': True, **q, 'courier_minutes': out['duration_min']})
 
 
 @app.route('/tool/<int:tool_id>/book', methods=['POST'])
@@ -799,26 +990,46 @@ def book_tool(tool_id):
         flash('That tool is already booked for some of those days.', 'error')
         return redirect(url_for('tool_detail', tool_id=tool_id))
 
-    delivery = request.form.get('delivery') == '1'
+    method = request.form.get('delivery_method') or ('owner' if request.form.get('delivery') == '1' else 'pickup')
+    if method not in ('pickup', 'owner', 'courier'):
+        method = 'pickup'
     hour = request.form.get('hour', 10, type=int) % 24
-    q = build_quote(tool, start, end, delivery, hour)
-    if delivery and not q['delivery_available']:
-        flash(f"Delivery is only offered within {listing_utils.DELIVERY_MAX_MILES} miles.", 'error')
+    dropoff, courier_fee = None, None
+    if method == 'courier':
+        if not courier_available(tool):
+            flash('Courier delivery isn\'t available for this tool.', 'error')
+            return redirect(url_for('tool_detail', tool_id=tool_id))
+        dropoff, error = dropoff_from_form(request.form, user)
+        if error:
+            flash(error, 'error')
+            return redirect(url_for('tool_detail', tool_id=tool_id))
+        try:
+            courier_fee, _ = courier_round_trip(tool, dropoff)
+        except Exception as e:
+            print(f'Courier quote at booking failed: {e}')
+            flash('Couldn\'t get a courier price for that address. Try again, or choose pickup.', 'error')
+            return redirect(url_for('tool_detail', tool_id=tool_id))
+    q = build_quote(tool, start, end, method, hour, courier_fee=courier_fee)
+    if method == 'owner' and not q['delivery_available']:
+        flash(f"The owner only delivers within {listing_utils.DELIVERY_MAX_MILES} miles.", 'error')
         return redirect(url_for('tool_detail', tool_id=tool_id))
 
     db = get_db()
+    d = dropoff or {}
     db.execute(
         '''INSERT INTO bookings (tool_id, renter_id, start_date, end_date, days, rental_total, service_fee,
                                  delivery, delivery_fee, deposit, total_charge, owner_payout, message,
-                                 status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?)''',
+                                 status, created_at, delivery_method, dropoff_street, dropoff_city,
+                                 dropoff_region, dropoff_postal, dropoff_lat, dropoff_lng, renter_phone)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
         (tool_id, user['id'], start.isoformat(), end.isoformat(), q['days'], q['rental_total'],
-         q['service_fee'], int(delivery), q['delivery_fee'], q['deposit_hold'], q['total_charge'],
+         q['service_fee'], int(method != 'pickup'), q['delivery_fee'], q['deposit_hold'], q['total_charge'],
          q['owner_payout'], request.form.get('message', '').strip()[:500],
-         datetime.now().isoformat(timespec='seconds'))
+         datetime.now().isoformat(timespec='seconds'), method, d.get('street'), d.get('city'), d.get('region'),
+         d.get('postal_code'), d.get('lat'), d.get('lng'), d.get('phone'))
     )
     track(db, 'booking_requested', user_id=user['id'], value=q['total_charge'], tool_id=tool_id,
-          days=q['days'], delivery=delivery)
+          days=q['days'], delivery=method != 'pickup', method=method)
     db.commit()
     flash(f"Request sent to {tool['owner_name']}. You'll see it under My Garage.", 'success')
     return redirect(url_for('garage'))
@@ -1009,8 +1220,14 @@ def garage():
            WHERE b.renter_id = ? ORDER BY b.created_at DESC''', (user['id'],)
     ).fetchall()
     earnings = sum(b['owner_payout'] for b in incoming if b['status'] in ('accepted', 'returned'))
+    ids = [b['id'] for b in list(incoming) + list(rentals) if b['delivery_method'] == 'courier']
+    trips = {}
+    if ids:
+        for d in db.execute(f"SELECT * FROM deliveries WHERE booking_id IN ({','.join('?' * len(ids))})", ids):
+            trips.setdefault(d['booking_id'], {})[d['leg']] = d
     return render_template('garage.html', listings=listings, incoming=incoming, rentals=rentals,
-                           earnings=earnings)
+                           earnings=earnings, trips=trips, done_statuses=delivery.DONE_STATUSES,
+                           courier_test_mode=not delivery.live_enabled())
 
 
 # action -> (who may do it, statuses it applies to, new status)
@@ -1048,11 +1265,117 @@ def update_booking(booking_id, action):
         flash('You already accepted another rental for some of those days.', 'error')
         return redirect(url_for('garage'))
 
+    if new_status in ('declined', 'cancelled'):
+        cancel_courier_trips(db, booking_id)
     db.execute('UPDATE bookings SET status = ? WHERE id = ?', (new_status, booking_id))
     track(db, f'booking_{new_status}', user_id=user['id'], value=booking['total_charge'], booking_id=booking_id)
     db.commit()
     flash(f'Booking {new_status}.', 'success')
     return redirect(url_for('garage'))
+
+
+
+# ---------------------------------------------------------------------------
+# Courier delivery (Uber Direct)
+# ---------------------------------------------------------------------------
+
+def cancel_courier_trips(db, booking_id):
+    """Best effort: call off couriers that haven't finished when a booking is called off"""
+    for trip in db.execute('SELECT * FROM deliveries WHERE booking_id = ?', (booking_id,)).fetchall():
+        if trip['status'] in delivery.DONE_STATUSES:
+            continue
+        try:
+            delivery.cancel(trip['external_id'])
+            db.execute("UPDATE deliveries SET status = 'canceled', updated_at = ? WHERE id = ?",
+                       (datetime.now().isoformat(timespec='seconds'), trip['id']))
+        except Exception as e:
+            print(f"Couldn't cancel courier {trip['external_id']}: {e}")
+
+
+@app.route('/booking/<int:booking_id>/courier/<leg>', methods=['POST'])
+@login_required
+def dispatch_courier(booking_id, leg):
+    """The owner sends the tool out; the renter sends it back. Each is one Uber Direct trip."""
+    if leg not in ('out', 'return'):
+        abort(404)
+    db = get_db()
+    b = db.execute(
+        '''SELECT b.*, t.name AS tool_name, t.owner_id, t.courier_size, t.weight_lbs,
+                  COALESCE(t.pickup_lat, o.lat) AS owner_lat, COALESCE(t.pickup_lng, o.lng) AS owner_lng,
+                  o.name AS owner_name, o.phone AS owner_phone, o.street_address AS owner_street,
+                  o.city AS owner_city, o.region AS owner_region, o.postal_code AS owner_postal,
+                  r.name AS renter_name
+           FROM bookings b JOIN tools t ON b.tool_id = t.id JOIN users o ON t.owner_id = o.id
+                JOIN users r ON b.renter_id = r.id
+           WHERE b.id = ?''', (booking_id,)).fetchone()
+    if b is None:
+        abort(404)
+    if g.user['id'] != (b['owner_id'] if leg == 'out' else b['renter_id']):
+        abort(403)
+    if b['delivery_method'] != 'courier' or b['status'] != 'accepted':
+        flash('Couriers can only be sent for accepted courier bookings.', 'error')
+        return redirect(url_for('garage'))
+    existing = db.execute('SELECT * FROM deliveries WHERE booking_id = ? AND leg = ?', (booking_id, leg)).fetchone()
+    if existing and existing['status'] not in ('canceled', 'returned'):
+        flash('A courier is already booked for that trip.', 'error')
+        return redirect(url_for('garage'))
+    if not (b['owner_street'] and b['owner_phone'] and b['dropoff_street'] and b['renter_phone']):
+        flash('Both addresses and phone numbers are needed for a courier. Check account settings.', 'error')
+        return redirect(url_for('garage'))
+
+    owner = {'name': b['owner_name'], 'phone': b['owner_phone'], 'street': b['owner_street'],
+             'city': b['owner_city'] or '', 'region': b['owner_region'] or '', 'postal_code': b['owner_postal'],
+             'lat': b['owner_lat'], 'lng': b['owner_lng']}
+    renter = {'name': b['renter_name'], 'phone': b['renter_phone'], 'street': b['dropoff_street'],
+              'city': b['dropoff_city'], 'region': b['dropoff_region'], 'postal_code': b['dropoff_postal'],
+              'lat': b['dropoff_lat'], 'lng': b['dropoff_lng']}
+    pickup, dropoff = (owner, renter) if leg == 'out' else (renter, owner)
+    item = {'name': b['tool_name'], 'courier_size': b['courier_size'] or 'medium', 'weight_lbs': b['weight_lbs']}
+    try:
+        trip = delivery.create(pickup, dropoff, item, external_id=f'toolshare-{booking_id}-{leg}-{int(time.time())}',
+                               notes=f'toolshare rental #{booking_id}: {b["tool_name"]}')
+    except delivery.DeliveryError as e:
+        flash(f'Uber couldn\'t book a courier: {e}', 'error')
+        return redirect(url_for('garage'))
+    except Exception as e:
+        print(f'Courier dispatch failed: {e}')
+        flash('Couldn\'t reach the courier service. Try again in a minute.', 'error')
+        return redirect(url_for('garage'))
+    now = datetime.now().isoformat(timespec='seconds')
+    db.execute('''INSERT OR REPLACE INTO deliveries (booking_id, leg, provider, external_id, fee_cents, status,
+                                                      tracking_url, live, created_at, updated_at)
+                  VALUES (?, ?, 'uber_direct', ?, ?, ?, ?, ?, ?, ?)''',
+               (booking_id, leg, trip['id'], trip['fee_cents'], trip['status'], trip['tracking_url'],
+                int(trip['live']), now, now))
+    track(db, 'courier_dispatched', user_id=g.user['id'], value=trip['fee_cents'] / 100, booking_id=booking_id,
+          leg=leg, live=trip['live'])
+    db.commit()
+    flash('Courier requested. Follow it with the tracking link.' if trip['live'] else
+          'Test courier requested (Uber\'s Robocourier, no real driver).', 'success')
+    return redirect(url_for('garage'))
+
+
+@app.route('/webhooks/uber-direct', methods=['POST'])
+def uber_direct_webhook():
+    """Delivery status updates from Uber, signed with the webhook's signing key"""
+    raw = request.get_data()
+    if not delivery.verify_webhook(raw, request.headers.get('X-Uber-Signature', '')):
+        abort(401)
+    payload = request.get_json(silent=True) or {}
+    data = payload.get('data') or {}
+    delivery_id = payload.get('delivery_id') or data.get('id')
+    status = payload.get('status') or data.get('status')
+    if not delivery_id or not status:
+        return jsonify({'ok': True})
+    db = get_db()
+    cur = db.execute('''UPDATE deliveries SET status = ?, tracking_url = COALESCE(?, tracking_url), updated_at = ?
+                         WHERE external_id = ?''',
+                     (str(status)[:40], data.get('tracking_url'), datetime.now().isoformat(timespec='seconds'),
+                      delivery_id))
+    if cur.rowcount:
+        track(db, 'courier_status', status=str(status)[:40])
+    db.commit()
+    return jsonify({'ok': True})
 
 
 @app.route('/tool/<int:tool_id>/unlist', methods=['POST'])

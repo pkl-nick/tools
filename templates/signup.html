@@ -12,8 +12,11 @@
         <label>email<input type="email" name="email" value="{{ form.get('email', '') }}" autocomplete="email" required></label>
         <label>password<input type="password" name="password" autocomplete="new-password" minlength="8" required>
             <span class="hint">at least 8 characters</span></label>
-        <label>neighborhood<input name="neighborhood" value="{{ form.get('neighborhood', '') }}" placeholder="e.g. Highland" maxlength="60" required>
-            <span class="hint">shown on your listings instead of your address</span></label>
+        <div class="row">
+            <label>neighborhood<input name="neighborhood" value="{{ form.get('neighborhood', '') }}" placeholder="e.g. Highland" maxlength="60" required></label>
+            <label>ZIP code<input name="postal_code" value="{{ form.get('postal_code', '') }}" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="80211" autocomplete="postal-code" required></label>
+        </div>
+        <span class="hint">Listings show the neighborhood and city (e.g. "Highland · Denver, CO"), never your address.</span>
 
         <div class="field">
             <span class="field-label">location</span>

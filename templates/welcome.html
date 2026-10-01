@@ -6,8 +6,11 @@
     <h1>welcome, {{ current_user.name.split(' ')[0] }}</h1>
     <p class="lede">One more step: tell neighbors roughly where you are, so "nearest first" works for you.</p>
     <form method="post" action="{{ url_for('welcome', next=request.args.get('next')) }}">{{ csrf_field() }}
-        <label>neighborhood<input name="neighborhood" placeholder="e.g. Highland" maxlength="60" required autofocus>
-            <span class="hint">shown on your listings instead of your address</span></label>
+        <div class="row">
+            <label>neighborhood<input name="neighborhood" value="{{ current_user.neighborhood or '' }}" placeholder="e.g. Highland" maxlength="60" required autofocus></label>
+            <label>ZIP code<input name="postal_code" value="{{ current_user.postal_code or '' }}" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="80211" required></label>
+        </div>
+        <span class="hint">Your listings show the neighborhood and city (e.g. "Capitol Hill · Denver, CO"), never your address.</span>
         <div class="field">
             <span class="field-label">location</span>
             <input type="hidden" name="lat" value="">

@@ -24,6 +24,7 @@
     <div class="stat"><b>{{ k.bookings }}</b><span>rental requests · {{ k.bookings_7d }} this week · {{ k.bookings_accepted }} accepted</span></div>
     <div class="stat"><b>{{ k.gmv | money }}</b><span>rental volume · {{ k.platform_revenue | money }} platform revenue{% if k.bookings_accepted %} · {{ k.delivery_share | int }}% delivered{% endif %}</span></div>
     <div class="stat"><b>{{ k.ai_cost_7d | money }}</b><span>AI spend this week · {{ k.ai_cost_30d | money }} in 30 days</span></div>
+    <div class="stat"><b>{{ k.courier_trips_30d }}</b><span>courier trips (30 days) · {{ k.courier_cost_30d | money }} paid to Uber{% if k.courier_test_trips_30d %} · {{ k.courier_test_trips_30d }} test{% endif %} · {{ k.courier_bookings }} courier rentals</span></div>
     <div class="stat"><b>{{ k.ai_calls_7d }}</b><span>photos analyzed this week · {{ k.ai_avg_seconds_7d }}s avg{% if k.upload_limited_7d %} · {{ k.upload_limited_7d }} hit the cap{% endif %}</span></div>
 </div>
 

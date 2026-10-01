@@ -49,7 +49,7 @@ def make_user(client, name='Pat', email=None, password='hunter2hunter2', platfor
     """Sign up through the real form; leaves the client logged in as this user"""
     client.post('/logout')
     email = email or f'{name.lower().replace(" ", ".")}@example.com'
-    data = {'name': name, 'email': email, 'password': password, 'neighborhood': 'Highland',
+    data = {'name': name, 'email': email, 'password': password, 'neighborhood': 'Highland', 'postal_code': '80211',
             'lat': '' if lat is None else str(lat), 'lng': '' if lng is None else str(lng),
             'battery_platforms': list(platforms)}
     res = client.post('/signup', data=data)
@@ -516,7 +516,7 @@ def test_signup_validates_and_rejects_duplicate_email(client):
     make_user(client, 'Pat', email='pat@example.com')
     client.post('/logout')
     dup = client.post('/signup', data={'name': 'Pat 2', 'email': 'PAT@example.com', 'password': 'longenough1',
-                                       'neighborhood': 'Baker'})
+                                       'neighborhood': 'Baker', 'postal_code': '80223'})
     assert dup.status_code == 400 and b'already exists' in dup.data
 
 
@@ -560,9 +560,10 @@ def test_account_update_avatar_and_password(client):
     uid = make_user(client, 'Pat', email='pat@example.com')
     other = make_user(client, 'Sam', email='sam@example.com')
     login_as(client, uid)
-    taken = client.post('/account', data={'name': 'Pat', 'email': 'sam@example.com', 'neighborhood': 'Baker'})
+    taken = client.post('/account', data={'name': 'Pat', 'email': 'sam@example.com', 'neighborhood': 'Baker',
+                                          'postal_code': '80211'})
     assert taken.status_code == 302 and db_query('SELECT email FROM users WHERE id = ?', (uid,))[0]['email'] == 'pat@example.com'
-    client.post('/account', data={'name': 'Pat Q', 'email': 'patq@example.com', 'neighborhood': 'Baker',
+    client.post('/account', data={'name': 'Pat Q', 'email': 'patq@example.com', 'neighborhood': 'Baker', 'postal_code': '80211',
                                   'bio': 'I fix old trucks.', 'battery_platforms': ['DeWalt 20V MAX', 'bogus'],
                                   'lat': '39.75', 'lng': '-105.0'})
     u = db_query('SELECT * FROM users WHERE id = ?', (uid,))[0]
@@ -750,6 +751,7 @@ def test_migration_from_v1_database(tmp_path):
     u = conn.execute('SELECT * FROM users').fetchone()
     t = conn.execute('SELECT * FROM tools').fetchone()
     assert u['is_demo'] == 1 and u['email'] is None and t['published_at'] and t['daily_price'] == 3
+    assert u['offers_delivery'] == 1 and u['postal_code'] is None and 'courier_size' in t.keys()
     assert conn.execute('PRAGMA user_version').fetchone()[0] == db_builder.SCHEMA_VERSION
 
 
@@ -812,7 +814,7 @@ def test_google_sign_up_then_finish_profile(client, sso):
     # new social accounts must finish their profile first
     res = client.get('/list')
     assert res.status_code == 302 and '/welcome' in res.headers['Location']
-    client.post('/welcome?next=/list', data={'neighborhood': 'Highland', 'lat': '39.76', 'lng': '-105.01'})
+    client.post('/welcome?next=/list', data={'neighborhood': 'Highland', 'postal_code': '80211', 'lat': '39.76', 'lng': '-105.01'})
     assert client.get('/list').status_code == 200
     u = db_query("SELECT * FROM users WHERE email = 'pat@gmail.com'")[0]
     assert u['password_hash'] is None and u['name'] == 'Pat Google' and u['lat'] == 39.76
@@ -872,7 +874,7 @@ def test_connect_and_disconnect_from_account(client, sso):
 def test_social_only_account_must_set_password_before_disconnecting(client, sso):
     sso('google', **GOOGLE_PAT)
     client.get('/auth/google'); client.get('/auth/google/callback')
-    client.post('/welcome', data={'neighborhood': 'Baker'})
+    client.post('/welcome', data={'neighborhood': 'Baker', 'postal_code': '80223'})
     client.post('/auth/google/disconnect')
     assert db_query('SELECT COUNT(*) AS n FROM identities')[0]['n'] == 1
     client.post('/account/password', data={'new_password': 'brandnewpass'})   # no current password needed
@@ -902,3 +904,263 @@ def test_post_page_asks_where_tools_are(client):
     make_user(client, 'Pat')
     page = client.get('/list').data
     assert b'where will renters pick these tools up?' in page and b'geo.js' in page
+
+
+# ---------------------------------------------------------------------------
+# ZIP codes and places
+# ---------------------------------------------------------------------------
+
+FAKE_ZIPS = {
+    '80203': {'lat': 39.731, 'lng': -104.981, 'city': 'Denver', 'region': 'CO', 'postal_code': '80203'},
+    '98102': {'lat': 47.636, 'lng': -122.321, 'city': 'Seattle', 'region': 'WA', 'postal_code': '98102'},
+}
+
+
+@pytest.fixture
+def maps(monkeypatch):
+    """Pretend Azure Maps is set up, with two ZIPs that both contain a "Capitol Hill" """
+    import places
+    monkeypatch.setenv('AZURE_MAPS_KEY', 'test')
+    monkeypatch.setattr(places, 'lookup_zip', lambda z: FAKE_ZIPS.get(z))
+    monkeypatch.setattr(places, 'lookup_address', lambda street, city, region, postal: (
+        None if 'nowhere' in street.lower() else {'lat': 39.74, 'lng': -104.98, 'city': city, 'region': region,
+                                                  'postal_code': postal, 'formatted': street, 'confidence': 'High'}))
+    return places
+
+
+def signup(client, name, postal, neighborhood='Capitol Hill', **extra):
+    client.post('/logout')
+    return client.post('/signup', data={'name': name, 'email': f'{name.lower()}@example.com',
+                                        'password': 'hunter2hunter2', 'neighborhood': neighborhood,
+                                        'postal_code': postal, **extra})
+
+
+def test_same_neighborhood_name_resolves_to_different_cities(client, maps):
+    assert signup(client, 'Dee', '80203').status_code == 302
+    assert signup(client, 'Sea', '98102').status_code == 302
+    dee, sea = (db_query('SELECT * FROM users WHERE name = ?', (n,))[0] for n in ('Dee', 'Sea'))
+    assert (dee['city'], dee['region'], dee['postal_code']) == ('Denver', 'CO', '80203')
+    assert (sea['city'], sea['region']) == ('Seattle', 'WA')
+    # No browser location: the ZIP's center is used instead of a default city
+    assert (sea['lat'], sea['lng']) == (47.636, -122.321)
+    add_tool(sea['id'], name='Seattle Pipe Bender')
+    page = client.get(f"/u/{sea['id']}").data
+    assert b'Capitol Hill \xc2\xb7 Seattle, WA' in page
+
+
+def test_browser_location_beats_zip_center(client, maps):
+    signup(client, 'Loc', '80203', lat='39.7401', lng='-104.9812')
+    u = db_query("SELECT * FROM users WHERE name = 'Loc'")[0]
+    assert (u['lat'], u['lng'], u['city']) == (39.74, -104.981, 'Denver')
+
+
+def test_unknown_or_missing_zip_is_rejected(client, maps):
+    assert b'find that ZIP' in signup(client, 'Bad', '00000').data
+    assert b'5-digit ZIP' in signup(client, 'None', '').data
+    assert not db_query("SELECT 1 FROM users WHERE name IN ('Bad', 'None')")
+
+
+def test_changing_zip_moves_location_and_city(client, maps):
+    signup(client, 'Mover', '80203')
+    client.post('/account', data={'name': 'Mover', 'email': 'mover@example.com', 'neighborhood': 'Capitol Hill',
+                                  'postal_code': '98102'})
+    u = db_query("SELECT * FROM users WHERE name = 'Mover'")[0]
+    assert (u['city'], u['lat']) == ('Seattle', 47.636)
+
+
+def test_existing_users_without_zip_are_asked_for_one(client):
+    uid = make_user(client, 'Legacy')
+    db_exec('UPDATE users SET postal_code = NULL WHERE id = ?', (uid,))
+    res = client.get('/garage')
+    assert res.status_code == 302 and '/welcome' in res.headers['Location']
+    assert b'value="Highland"' in client.get('/welcome').data      # neighborhood is kept
+    client.post('/welcome', data={'neighborhood': 'Highland', 'postal_code': '80211'})
+    assert client.get('/garage').status_code == 200
+
+
+def test_visitors_can_search_near_a_zip(client, maps):
+    signup(client, 'Sam', '98102')
+    add_tool(db_query("SELECT id FROM users WHERE name = 'Sam'")[0]['id'], name='Seattle Pipe Bender')
+    client.post('/logout')
+    assert b'Seattle Pipe Bender' not in client.get('/').data          # default area is Denver
+    client.post('/area', data={'postal_code': '98102'})
+    page = client.get('/').data
+    assert b'Seattle Pipe Bender' in page and b'Seattle, WA' in page
+
+
+def test_phone_numbers_are_normalized():
+    assert app_module.normalize_phone('(303) 555-0100') == '+13035550100'
+    assert app_module.normalize_phone('1-303-555-0100') == '+13035550100'
+    assert app_module.normalize_phone('555-0100') is None
+
+
+# ---------------------------------------------------------------------------
+# Uber Direct courier delivery
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def uber(monkeypatch):
+    """Fake Uber Direct: records every API call and answers like the sandbox does"""
+    import delivery
+    for k in ('UBER_DIRECT_CUSTOMER_ID', 'UBER_DIRECT_CLIENT_ID', 'UBER_DIRECT_CLIENT_SECRET'):
+        monkeypatch.setenv(k, 'test')
+    monkeypatch.setenv('UBER_DIRECT_WEBHOOK_KEY', 'whkey')
+    monkeypatch.delenv('COURIER_LIVE', raising=False)
+    calls = []
+
+    def fake_post(path, body):
+        calls.append((path, body))
+        if path == 'delivery_quotes':
+            return {'id': f'dqt_{len(calls)}', 'fee': 700, 'duration': 25}
+        if path == 'deliveries':
+            return {'id': f'del_{len(calls)}', 'status': 'pending', 'fee': 700,
+                    'tracking_url': 'https://track.example/1', 'live_mode': fake_post.live}
+        return {}
+    fake_post.live = False
+    monkeypatch.setattr(delivery, '_post', fake_post)
+    fake_post.calls = calls
+    return fake_post
+
+
+def courier_setup(client, courier_size='medium', weight=20):
+    owner = make_user(client, 'Owner Olive', lat=CENTER[0] + 0.01, lng=CENTER[1])
+    db_exec("UPDATE users SET street_address = '1 Elm St', phone = '+13035550100', city = 'Denver', region = 'CO' "
+            "WHERE id = ?", (owner,))
+    tool_id = add_tool(owner, courier_size=courier_size, weight_lbs=weight)
+    renter = make_user(client, 'Renter Rae', lat=CENTER[0], lng=CENTER[1])
+    return owner, tool_id, renter
+
+
+ADDRESS = {'dropoff_street': '9 Oak Ave', 'dropoff_city': 'Denver', 'dropoff_region': 'co',
+           'dropoff_postal': '80211', 'renter_phone': '303 555 0199'}
+
+
+def test_courier_option_needs_config_fit_and_owner_details(client, uber, monkeypatch):
+    owner, tool_id, renter = courier_setup(client)
+    assert b'value="courier"' in client.get(f'/tool/{tool_id}').data
+    big = add_tool(owner, name='Cement Mixer', courier_size='too_big', weight_lbs=200)
+    assert b'value="courier"' not in client.get(f'/tool/{big}').data
+    db_exec('UPDATE users SET phone = NULL WHERE id = ?', (owner,))
+    assert b'value="courier"' not in client.get(f'/tool/{tool_id}').data
+    db_exec("UPDATE users SET phone = '+13035550100' WHERE id = ?", (owner,))
+    monkeypatch.delenv('UBER_DIRECT_CLIENT_SECRET')
+    assert b'value="courier"' not in client.get(f'/tool/{tool_id}').data
+
+
+def test_courier_quote_prices_both_legs_with_markup(client, uber):
+    _, tool_id, _ = courier_setup(client)
+    start = date.today() + timedelta(days=1)
+    q = client.post('/api/courier-quote', data={'tool_id': tool_id, 'start': start.isoformat(),
+                                                 'end': start.isoformat(), 'hour': '10', **ADDRESS}).get_json()
+    assert q['success'], q
+    # Two $7 legs, +15% and $1: $17.10. The platform keeps it; the owner's payout is rent only.
+    assert q['delivery_fee'] == 17.10 and q['method'] == 'courier'
+    assert q['owner_payout'] == pytest.approx(q['rental_total'] * (1 - listing_utils.OWNER_COMMISSION), abs=0.01)
+    quotes = [b for p, b in uber.calls if p == 'delivery_quotes']
+    assert len(quotes) == 2 and '"9 Oak Ave"' in quotes[0]['dropoff_address'] and '"1 Elm St"' in quotes[1]['dropoff_address']
+
+
+def test_courier_booking_dispatch_and_webhook(client, uber):
+    import hmac as _hmac, hashlib, json as _json
+    owner, tool_id, renter = courier_setup(client)
+    start = date.today() + timedelta(days=1)
+    res = book(client, tool_id, start, start, delivery_method='courier', **ADDRESS)
+    assert res.status_code == 302 and '/garage' in res.headers['Location']
+    b = db_query('SELECT * FROM bookings')[0]
+    assert (b['delivery_method'], b['dropoff_region'], b['renter_phone'], b['delivery_fee']) == \
+        ('courier', 'CO', '+13035550199', 17.10)
+
+    # The renter can't send the courier out, and nobody can before the owner accepts
+    assert client.post(f"/booking/{b['id']}/courier/out").status_code == 403
+    login_as(client, owner)
+    client.post(f"/booking/{b['id']}/courier/out")
+    assert not db_query('SELECT * FROM deliveries')
+    client.post(f"/booking/{b['id']}/accept")
+    client.post(f"/booking/{b['id']}/courier/out")
+    trip = db_query('SELECT * FROM deliveries')[0]
+    assert (trip['leg'], trip['status'], trip['live']) == ('out', 'pending', 0)
+    sent = [body for p, body in uber.calls if p == 'deliveries'][0]
+    assert sent['test_specifications']['robo_courier_specification']['mode'] == 'auto'
+    assert sent['pickup_phone_number'] == '+13035550100' and sent['manifest_items'][0]['size'] == 'medium'
+    # A second click doesn't book a second courier
+    client.post(f"/booking/{b['id']}/courier/out")
+    assert len([p for p, _ in uber.calls if p == 'deliveries']) == 1
+    assert b'track' in client.get('/garage').data
+
+    # Uber reports progress through the signed webhook
+    body = _json.dumps({'kind': 'event.delivery_status', 'delivery_id': trip['external_id'],
+                        'status': 'delivered', 'data': {'id': trip['external_id'], 'status': 'delivered'}}).encode()
+    bad = client.post('/webhooks/uber-direct', data=body, headers={'X-Uber-Signature': 'nope'},
+                      content_type='application/json')
+    assert bad.status_code == 401
+    sig = _hmac.new(b'whkey', body, hashlib.sha256).hexdigest()
+    ok = client.post('/webhooks/uber-direct', data=body, headers={'X-Uber-Signature': sig},
+                     content_type='application/json')
+    assert ok.status_code == 200
+    assert db_query('SELECT status FROM deliveries')[0]['status'] == 'delivered'
+
+    # The renter sends it back
+    login_as(client, renter)
+    client.post(f"/booking/{b['id']}/courier/return")
+    legs = {d['leg']: d for d in db_query('SELECT * FROM deliveries')}
+    assert set(legs) == {'out', 'return'}
+    back = [body for p, body in uber.calls if p == 'deliveries'][-1]
+    assert '"9 Oak Ave"' in back['pickup_address'] and '"1 Elm St"' in back['dropoff_address']
+
+
+def test_webhook_works_with_csrf_on(client, uber):
+    import hmac as _hmac, hashlib
+    app_module.app.config['CSRF_ENABLED'] = True
+    try:
+        body = b'{"delivery_id": "del_x", "status": "pickup"}'
+        sig = _hmac.new(b'whkey', body, hashlib.sha256).hexdigest()
+        res = client.post('/webhooks/uber-direct', data=body, headers={'X-Uber-Signature': sig},
+                          content_type='application/json')
+        assert res.status_code == 200
+    finally:
+        app_module.app.config['CSRF_ENABLED'] = False
+
+
+def test_live_credentials_are_refused_unless_live_is_on(client, uber):
+    owner, tool_id, renter = courier_setup(client)
+    start = date.today() + timedelta(days=1)
+    book(client, tool_id, start, start, delivery_method='courier', **ADDRESS)
+    bid = db_query('SELECT id FROM bookings')[0]['id']
+    login_as(client, owner)
+    client.post(f'/booking/{bid}/accept')
+    uber.live = True
+    res = client.post(f'/booking/{bid}/courier/out', follow_redirects=True)
+    assert b'COURIER_LIVE' in res.data
+    assert any(p.endswith('/cancel') for p, _ in uber.calls)     # the real trip was called off
+    assert not db_query('SELECT * FROM deliveries')
+
+
+def test_cancelling_a_booking_cancels_its_courier(client, uber):
+    owner, tool_id, renter = courier_setup(client)
+    start = date.today() + timedelta(days=1)
+    book(client, tool_id, start, start, delivery_method='courier', **ADDRESS)
+    bid = db_query('SELECT id FROM bookings')[0]['id']
+    login_as(client, owner)
+    client.post(f'/booking/{bid}/accept')
+    client.post(f'/booking/{bid}/courier/out')
+    login_as(client, renter)
+    client.post(f'/booking/{bid}/cancel')
+    assert db_query('SELECT status FROM deliveries')[0]['status'] == 'canceled'
+
+
+def test_owner_delivery_respects_owner_setting(client):
+    owner = make_user(client, 'Owner Olive', lat=CENTER[0] + 0.01, lng=CENTER[1])
+    tool_id = add_tool(owner)
+    db_exec('UPDATE users SET offers_delivery = 0 WHERE id = ?', (owner,))
+    make_user(client, 'Renter Rae', lat=CENTER[0], lng=CENTER[1])
+    start = date.today() + timedelta(days=1)
+    book(client, tool_id, start, start, delivery_method='owner')
+    assert not db_query('SELECT * FROM bookings')
+
+
+def test_ai_drafts_include_courier_size():
+    d = listing_utils.normalize_draft({'name': 'Impact wrench', 'category': 'Power Tools', 'courier_size': 'small',
+                                       'weight_lbs': 6})
+    assert d['courier_size'] == 'small' and d['weight_lbs'] == 6
+    # Unknown sizes aren't guessed: the tool just isn't offered for courier delivery
+    assert listing_utils.normalize_draft({'name': 'X', 'courier_size': 'huge'})['courier_size'] is None

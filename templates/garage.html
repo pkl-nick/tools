@@ -4,6 +4,24 @@
 {% macro status_tag(status) -%}
 <span class="tag status-{{ status }}">{{ status }}</span>
 {%- endmacro %}
+{% macro delivery_cell(b, side) -%}
+{%- if b.delivery_method == 'courier' -%}
+    courier, ${{ '%.2f' | format(b.delivery_fee) }}
+    {%- set legs = trips.get(b.id, {}) %}
+    {%- for leg, label in [('out', 'to renter'), ('return', 'back')] if leg in legs %}
+    <div class="small">{{ label }}: {{ legs[leg].status | replace('_', ' ') }}{% if not legs[leg].live %} <span class="tag">test</span>{% endif %}
+        {% if legs[leg].tracking_url %}· <a href="{{ legs[leg].tracking_url }}" target="_blank" rel="noopener">track</a>{% endif %}</div>
+    {%- endfor %}
+    {%- set leg = 'out' if side == 'owner' else 'return' %}
+    {%- if b.status == 'accepted' and (leg not in legs or legs[leg].status in ('canceled', 'returned')) %}
+    <form method="post" action="{{ url_for('dispatch_courier', booking_id=b.id, leg=leg) }}">{{ csrf_field() }}<button class="btn btn-small">{{ 'send with courier' if leg == 'out' else 'courier it back' }}</button></form>
+    {%- endif %}
+{%- elif b.delivery_method == 'owner' -%}
+    {{ 'you drop off, +$%.2f' | format(b.delivery_fee) if side == 'owner' else 'owner drops off, $%.2f' | format(b.delivery_fee) }}
+{%- else -%}
+    pickup
+{%- endif -%}
+{%- endmacro %}
 {% block content %}
 <h1>{{ current_user.name }}'s garage</h1>
 <div class="stats">
@@ -23,7 +41,7 @@
         <td>{{ b.tool_name }}{% if b.message %}<div class="muted small">"{{ b.message }}"</div>{% endif %}</td>
         <td><a href="{{ url_for('profile', user_id=b.renter_user_id) }}">{{ b.renter_name }}</a></td>
         <td>{{ b.start_date }} → {{ b.end_date }} <span class="muted small">({{ b.days }}d)</span></td>
-        <td>{{ 'yes, $%.2f' | format(b.delivery_fee) if b.delivery else 'pickup' }}</td>
+        <td>{{ delivery_cell(b, 'owner') }}</td>
         <td>${{ '%.2f' | format(b.owner_payout) }}</td>
         <td>{{ status_tag(b.status) }}</td>
         <td class="row-actions">
@@ -47,13 +65,14 @@
 {% if rentals %}
 <div class="table-wrap">
 <table>
-    <thead><tr><th>Tool</th><th>Owner</th><th>Dates</th><th>Total</th><th>Deposit hold</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>Tool</th><th>Owner</th><th>Dates</th><th>Delivery</th><th>Total</th><th>Deposit hold</th><th>Status</th><th></th></tr></thead>
     <tbody>
     {% for b in rentals %}
     <tr>
         <td><a href="{{ url_for('tool_detail', tool_id=b.tool_id) }}">{{ b.tool_name }}</a></td>
         <td><a href="{{ url_for('profile', user_id=b.owner_user_id) }}">{{ b.owner_name }}</a></td>
         <td>{{ b.start_date }} → {{ b.end_date }}</td>
+        <td>{{ delivery_cell(b, 'renter') }}</td>
         <td>${{ '%.2f' | format(b.total_charge) }}</td>
         <td>${{ '%.0f' | format(b.deposit) }}</td>
         <td>{{ status_tag(b.status) }}</td>

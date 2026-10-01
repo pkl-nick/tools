@@ -7,7 +7,7 @@
     {{ avatar(person, 'lg') }}
     <div>
         <h1>{{ person.name }}{% if person.is_demo %} <span class="tag">sample member</span>{% endif %}</h1>
-        <p class="muted">{{ person.neighborhood }} · {{ miles }} mi away{% if person.created_at and not person.is_demo %} · member since {{ person.created_at[:7] }}{% endif %}
+        <p class="muted">{{ place_label(person) }} · {{ miles }} mi away{% if person.created_at and not person.is_demo %} · member since {{ person.created_at[:7] }}{% endif %}
             {% if completed %} · {{ completed }} rental{{ 's' if completed != 1 }} completed{% endif %}</p>
         {% if platforms %}<div class="tags">{% for p in platforms %}<span class="tag">{{ p }}</span>{% endfor %}</div>{% endif %}
     </div>

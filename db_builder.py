@@ -101,6 +101,23 @@ CREATE TABLE IF NOT EXISTS identities (
 );
 CREATE INDEX IF NOT EXISTS idx_identities_user ON identities(user_id);
 
+-- Courier trips for a booking: out (owner -> renter) and return (renter -> owner)
+CREATE TABLE IF NOT EXISTS deliveries (
+    id INTEGER PRIMARY KEY,
+    booking_id INTEGER NOT NULL REFERENCES bookings(id),
+    leg TEXT NOT NULL,                 -- out | return
+    provider TEXT NOT NULL,            -- uber_direct
+    external_id TEXT,                  -- provider's delivery id
+    fee_cents INTEGER,                 -- what the provider charges us
+    status TEXT NOT NULL,              -- provider status: pending, pickup, pickup_complete, dropoff, delivered, canceled, returned
+    tracking_url TEXT,
+    live INTEGER NOT NULL DEFAULT 0,   -- 0 = provider test mode
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (booking_id, leg)
+);
+CREATE INDEX IF NOT EXISTS idx_deliveries_external ON deliveries(external_id);
+
 -- Product telemetry (see telemetry.py)
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY,
@@ -128,60 +145,60 @@ DEMO_USERS = [
 
 # owner index into DEMO_USERS, then tool fields
 DEMO_TOOLS = [
-    (0, dict(name='60-Gallon Upright Air Compressor', brand='Campbell Hausfeld', model='DC060500',
+    (0, dict(courier_size='too_big', weight_lbs=160, name='60-Gallon Upright Air Compressor', brand='Campbell Hausfeld', model='DC060500',
              category='Air Tools & Compressors', power_source='Corded (240V)',
              description='Shop compressor, 3.7 HP. Runs framing nailers, impact guns and sprayers all day.',
              included_items='25 ft hose, quick-connect coupler', daily_price=4.5, deposit=300,
              replacement_value=900, risk_tier='standard',
              safety_notes='Needs a 240V outlet. Drain tank after use.')),
-    (0, dict(name='Framing Nailer', brand='Milwaukee', model='2744-20 M18 FUEL',
+    (0, dict(courier_size='medium', weight_lbs=9, name='Framing Nailer', brand='Milwaukee', model='2744-20 M18 FUEL',
              category='Power Tools', power_source='Battery', battery_platform='Milwaukee M18',
              description='Cordless 21-degree framing nailer. Bare tool, bring your own M18 battery or add one.',
              included_items='Bare tool only', daily_price=3, deposit=250, replacement_value=450,
              risk_tier='waiver', safety_notes='Eye protection required. Never disable the contact trip.')),
-    (0, dict(name='Wet Tile Saw, 10"', brand='DeWalt', model='D36000',
+    (0, dict(courier_size='xlarge', weight_lbs=70, name='Wet Tile Saw, 10"', brand='DeWalt', model='D36000',
              category='Masonry & Concrete', power_source='Corded (120V)',
              description='Sliding table tile saw, cuts up to 24" tile.', included_items='Stand, blade, water tray',
              daily_price=4, deposit=300, replacement_value=1000, risk_tier='waiver',
              safety_notes='Blade guard must stay on. GFCI outlet only.')),
-    (0, dict(name='M18 5.0Ah Battery (x2)', brand='Milwaukee', model='48-11-1850',
+    (0, dict(courier_size='small', weight_lbs=3, name='M18 5.0Ah Battery (x2)', brand='Milwaukee', model='48-11-1850',
              category='Batteries & Chargers', power_source='Battery', battery_platform='Milwaukee M18',
              description='Two charged M18 XC5.0 packs. Add-on for bare M18 tools.', included_items='2 batteries',
              daily_price=1, deposit=150, replacement_value=250, risk_tier='standard',
              safety_notes='Do not use a pack that is swollen or cracked.')),
-    (1, dict(name='Gas Pressure Washer, 3300 PSI', brand='Simpson', model='MegaShot MSH3125',
+    (1, dict(courier_size='too_big', weight_lbs=70, name='Gas Pressure Washer, 3300 PSI', brand='Simpson', model='MegaShot MSH3125',
              category='Outdoor & Yard', power_source='Gas',
              description='Cleans driveways, decks and siding. Honda engine, starts first pull.',
              included_items='25 ft hose, 5 nozzle tips, soap tip', daily_price=3.5, deposit=200,
              replacement_value=450, risk_tier='waiver',
              safety_notes='Never point at people or pets. 0-degree tip can cut skin.')),
-    (1, dict(name='String Trimmer', brand='Ryobi', model='P20100 ONE+ HP',
+    (1, dict(courier_size='medium', weight_lbs=8, name='String Trimmer', brand='Ryobi', model='P20100 ONE+ HP',
              category='Outdoor & Yard', power_source='Battery', battery_platform='Ryobi ONE+',
              description='18V brushless trimmer. Bare tool, fits any Ryobi ONE+ battery.',
              included_items='Bare tool, spare spool', daily_price=1, deposit=75, replacement_value=140,
              risk_tier='standard', safety_notes='Wear eye protection.')),
-    (1, dict(name='Drywall Panel Lift', brand='Pentagon Tool', model='Professional 11ft',
+    (1, dict(courier_size='too_big', weight_lbs=90, name='Drywall Panel Lift', brand='Pentagon Tool', model='Professional 11ft',
              category='Specialty', power_source='Manual',
              description='Holds 4x12 sheets on ceilings up to 11 ft. One person can hang ceilings.',
              included_items='Extension, cradle', daily_price=2.5, deposit=150, replacement_value=260,
              risk_tier='standard', safety_notes='Lock the wheels before cranking up.')),
-    (2, dict(name='Coil Spring Compressor Kit', brand='OTC', model='6494',
+    (2, dict(courier_size='medium', weight_lbs=18, name='Coil Spring Compressor Kit', brand='OTC', model='6494',
              category='Automotive', power_source='Manual',
              description='Strut spring compressor for MacPherson struts. Heavy duty, clamshell style.',
              included_items='Compressor, jaws for 3 spring sizes', daily_price=1.5, deposit=120,
              replacement_value=250, risk_tier='waiver',
              safety_notes='Compressed springs store dangerous energy. Follow the included steps exactly.')),
-    (2, dict(name='2-Ton Folding Engine Hoist', brand='Pittsburgh', model='69514',
+    (2, dict(courier_size='too_big', weight_lbs=120, name='2-Ton Folding Engine Hoist', brand='Pittsburgh', model='69514',
              category='Automotive', power_source='Manual',
              description='Cherry picker for engine and transmission pulls. Folds for transport.',
              included_items='Hoist, load leveler', daily_price=3, deposit=200, replacement_value=320,
              risk_tier='waiver', safety_notes='Never get under a suspended load.')),
-    (2, dict(name='1/2" High-Torque Impact Wrench', brand='Milwaukee', model='2767-20 M18 FUEL',
+    (2, dict(courier_size='small', weight_lbs=7, name='1/2" High-Torque Impact Wrench', brand='Milwaukee', model='2767-20 M18 FUEL',
              category='Power Tools', power_source='Battery', battery_platform='Milwaukee M18',
              description='1,400 ft-lb breakaway torque. Takes off seized lug nuts and axle nuts.',
              included_items='Bare tool, impact socket set', daily_price=2, deposit=200,
              replacement_value=400, risk_tier='standard', safety_notes='Use impact-rated sockets only.')),
-    (3, dict(name='Electric Concrete Mixer, 4 cu ft', brand='Kushlan', model='450DD',
+    (3, dict(courier_size='too_big', weight_lbs=95, name='Electric Concrete Mixer, 4 cu ft', brand='Kushlan', model='450DD',
              category='Masonry & Concrete', power_source='Corded (120V)',
              description='Direct-drive mixer, mixes two 80 lb bags at a time.', included_items='Mixer',
              daily_price=3.5, deposit=200, replacement_value=600, risk_tier='standard',
@@ -205,7 +222,7 @@ def get_connection(db_path=None):
 
 
 # Stored in SQLite's PRAGMA user_version; each migration below brings a database up one step
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def init_database(conn, seed=None):
@@ -244,6 +261,30 @@ def migrate(conn):
         conn.execute('ALTER TABLE tools ADD COLUMN pickup_lat REAL')
         conn.execute('ALTER TABLE tools ADD COLUMN pickup_lng REAL')
         conn.execute('PRAGMA user_version = 3')
+        version = 3
+    if version < 4:
+        # v4: real places (ZIP -> city/state), private courier details, courier sizing, delivery legs
+        for table, column, decl in [
+            ('users', 'postal_code', 'TEXT'), ('users', 'city', 'TEXT'), ('users', 'region', 'TEXT'),
+            ('users', 'street_address', 'TEXT'), ('users', 'phone', 'TEXT'),           # private, couriers only
+            ('users', 'offers_delivery', 'INTEGER NOT NULL DEFAULT 1'),
+            ('tools', 'courier_size', 'TEXT'), ('tools', 'weight_lbs', 'REAL'),
+            ('bookings', 'delivery_method', "TEXT NOT NULL DEFAULT 'pickup'"),       # pickup | owner | courier
+            ('bookings', 'dropoff_street', 'TEXT'), ('bookings', 'dropoff_city', 'TEXT'),
+            ('bookings', 'dropoff_region', 'TEXT'), ('bookings', 'dropoff_postal', 'TEXT'),
+            ('bookings', 'dropoff_lat', 'REAL'), ('bookings', 'dropoff_lng', 'REAL'),
+            ('bookings', 'renter_phone', 'TEXT'),
+        ]:
+            conn.execute(f'ALTER TABLE {table} ADD COLUMN {column} {decl}')
+        conn.execute("UPDATE bookings SET delivery_method = CASE WHEN delivery = 1 THEN 'owner' ELSE 'pickup' END")
+        for tid, sizing in _deferred_sizing:
+            conn.execute('UPDATE tools SET courier_size = ?, weight_lbs = ? WHERE id = ?',
+                         (sizing['courier_size'], sizing['weight_lbs'], tid))
+        _deferred_sizing.clear()
+        conn.execute('PRAGMA user_version = 4')
+
+
+_deferred_sizing = []   # courier sizes for seeded tools, applied once migration v4 adds the columns
 
 
 def seed_demo_data(conn):
@@ -259,14 +300,17 @@ def seed_demo_data(conn):
         user_ids.append(cur.lastrowid)
 
     for owner_idx, tool in DEMO_TOOLS:
-        insert_tool(conn, owner_id=user_ids[owner_idx], status='listed', created_at=now, **tool)
+        tool = dict(tool)
+        sizing = {k: tool.pop(k) for k in ('courier_size', 'weight_lbs')}
+        tid = insert_tool(conn, owner_id=user_ids[owner_idx], status='listed', created_at=now, **tool)
+        _deferred_sizing.append((tid, sizing))
 
 
 TOOL_COLUMNS = [
     'name', 'brand', 'model', 'category', 'power_source', 'battery_platform', 'description',
     'included_items', 'daily_price', 'deposit', 'replacement_value', 'risk_tier', 'safety_notes',
     'photo_path', 'ai_confidence', 'batch_id', 'status', 'created_at', 'published_at',
-    'pickup_lat', 'pickup_lng',
+    'pickup_lat', 'pickup_lng', 'courier_size', 'weight_lbs',
 ]
 
 

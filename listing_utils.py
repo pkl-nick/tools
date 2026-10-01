@@ -85,6 +85,9 @@ BATTERY_PLATFORMS = [
     'Other',
 ]
 
+# How a car courier would carry it ("too_big" = needs a truck); see delivery.py for Uber's limits
+COURIER_SIZE_VALUES = ['small', 'medium', 'large', 'xlarge', 'too_big']
+
 # standard: normal rental. waiver: renter acknowledges safety notes at booking.
 # excluded: not rentable during the POC (highest injury risk).
 RISK_TIERS = ['standard', 'waiver', 'excluded']
@@ -204,11 +207,14 @@ TOOL_ITEM_SCHEMA = {
         "deposit": {"type": "number", "description": "Suggested refundable deposit in USD"},
         "risk_tier": {"type": "string", "enum": RISK_TIERS},
         "safety_notes": {"type": "string", "description": "One short safety note for the renter"},
-        "confidence": {"type": "number", "description": "0-1 confidence in the identification"}
+        "confidence": {"type": "number", "description": "0-1 confidence in the identification"},
+        "courier_size": {"type": "string", "enum": ["small", "medium", "large", "xlarge", "too_big"],
+                         "description": "How a car courier would carry it, including case and accessories"},
+        "weight_lbs": {"type": "number", "description": "Estimated weight in pounds, including case and accessories"}
     },
     "required": ["name", "brand", "model", "category", "power_source", "battery_platform",
                  "description", "included_items", "replacement_value", "daily_price",
-                 "deposit", "risk_tier", "safety_notes", "confidence"]
+                 "deposit", "risk_tier", "safety_notes", "confidence", "courier_size", "weight_lbs"]
 }
 
 # Structured Outputs (strict) guarantees the reply parses and matches this schema
@@ -244,6 +250,16 @@ You will see one photo of a garage, shelf, workbench or single tool. Create a dr
 - daily_price: cheap on purpose, so renters can keep a tool for days or a week without pressure. About 1% of replacement value per day (0.7% above $500), never below $1. Round to the nearest $0.50. Example: a $400 impact wrench is $4/day.
 - deposit: roughly 50-100% of replacement value, rounded to the nearest $25.
 </pricing_guidance>
+
+<courier_size>
+How a delivery courier in a car would carry the tool with its case and accessories:
+- small: one hand (a drill in a small case, a battery pack)
+- medium: a bag or one arm (a circular saw, a pancake compressor)
+- large: two hands (a miter saw, a pressure washer)
+- xlarge: multiple trips or awkward but still fits in a car trunk or back seat (a jobsite table saw)
+- too_big: needs a truck or two people (engine hoist, cabinet table saw, 60-gallon compressor, concrete mixer)
+weight_lbs: your best estimate of the weight in pounds.
+</courier_size>
 
 <risk_tiers>
 - excluded: chainsaws, pole saws, log splitters, stump grinders.
@@ -305,32 +321,32 @@ def vision_listing_call(image_bytes: bytes, mime_type: str, tier: str = 'terra')
 
 # Demo-mode drafts, picked deterministically from the photo bytes
 MOCK_DRAFTS = [
-    dict(name='Cordless Hammer Drill', brand='DeWalt', model='DCD996', category='Power Tools',
+    dict(courier_size='small', weight_lbs=6, name='Cordless Hammer Drill', brand='DeWalt', model='DCD996', category='Power Tools',
          power_source='Battery', battery_platform='DeWalt 20V MAX',
          description='3-speed brushless hammer drill, drills masonry and drives lag screws.',
          included_items='Bare tool', replacement_value=220, confidence=0.86,
          safety_notes='Use the side handle when drilling large holes.'),
-    dict(name='Gas Pressure Washer, 3100 PSI', brand='Generac', model='', category='Outdoor & Yard',
+    dict(courier_size='too_big', weight_lbs=65, name='Gas Pressure Washer, 3100 PSI', brand='Generac', model='', category='Outdoor & Yard',
          power_source='Gas', battery_platform='', description='Cleans driveways, decks and siding.',
          included_items='Hose, wand, 4 nozzle tips', replacement_value=430, risk_tier='waiver', confidence=0.78,
          safety_notes='Never point the wand at people or pets.'),
-    dict(name='Pancake Air Compressor, 6 Gal', brand='Porter-Cable', model='C2002', category='Air Tools & Compressors',
+    dict(courier_size='medium', weight_lbs=30, name='Pancake Air Compressor, 6 Gal', brand='Porter-Cable', model='C2002', category='Air Tools & Compressors',
          power_source='Corded (120V)', battery_platform='', description='Oil-free, 150 PSI. Good for trim nailers and tires.',
          included_items='25 ft hose', replacement_value=180, confidence=0.91,
          safety_notes='Drain the tank after each use.'),
-    dict(name='Strut Spring Compressor', brand='', model='', category='Automotive', power_source='Manual',
+    dict(courier_size='medium', weight_lbs=18, name='Strut Spring Compressor', brand='', model='', category='Automotive', power_source='Manual',
          battery_platform='', description='Clamshell-style compressor for MacPherson strut springs.',
          included_items='Compressor, 2 jaw sets', replacement_value=200, risk_tier='waiver', confidence=0.64,
          safety_notes='Compressed springs store dangerous energy.'),
-    dict(name='Circular Saw, 7-1/4"', brand='Milwaukee', model='2732-20 M18 FUEL', category='Power Tools',
+    dict(courier_size='medium', weight_lbs=9, name='Circular Saw, 7-1/4"', brand='Milwaukee', model='2732-20 M18 FUEL', category='Power Tools',
          power_source='Battery', battery_platform='Milwaukee M18', description='Brushless circular saw, rips 2x lumber easily.',
          included_items='Bare tool, framing blade', replacement_value=280, risk_tier='waiver', confidence=0.88,
          safety_notes='Keep the blade guard working. Clamp the workpiece.'),
-    dict(name='Extension Ladder, 24 ft', brand='Werner', model='D1224-2', category='Ladders & Access',
+    dict(courier_size='too_big', weight_lbs=55, name='Extension Ladder, 24 ft', brand='Werner', model='D1224-2', category='Ladders & Access',
          power_source='Manual', battery_platform='', description='Type I fiberglass ladder, safe near power lines.',
          included_items='Ladder', replacement_value=330, risk_tier='waiver', confidence=0.8,
          safety_notes='Set at a 4:1 angle and have someone foot it.'),
-    dict(name='Battery Pack & Charger', brand='Ryobi', model='P191 ONE+', category='Batteries & Chargers',
+    dict(courier_size='small', weight_lbs=4, name='Battery Pack & Charger', brand='Ryobi', model='P191 ONE+', category='Batteries & Chargers',
          power_source='Battery', battery_platform='Ryobi ONE+', description='Two 4Ah batteries with a dual-port charger.',
          included_items='2 batteries, charger', replacement_value=150, confidence=0.9,
          safety_notes='Do not use a swollen or cracked pack.'),
@@ -408,7 +424,12 @@ def normalize_draft(raw: Dict, owner_priced: bool = False) -> Dict:
     confidence = raw.get('confidence')
     confidence = None if confidence is None else min(1.0, max(0.0, _to_float(confidence)))
 
+    courier_size = raw.get('courier_size') if raw.get('courier_size') in COURIER_SIZE_VALUES else None
+    weight = _to_float(raw.get('weight_lbs'), default=0) or None
+
     return {
+        'courier_size': courier_size,
+        'weight_lbs': round(weight, 1) if weight else None,
         'name': name,
         'brand': str(raw.get('brand', '')).strip()[:60],
         'model': str(raw.get('model', '')).strip()[:60],
@@ -468,7 +489,8 @@ def delivery_fee(miles: float, hour: int) -> float:
 
 
 def quote(daily_price: float, deposit: float, days: int,
-          delivery: bool = False, miles: float = 0.0, hour: int = 12) -> Dict:
+          delivery: bool = False, miles: float = 0.0, hour: int = 12,
+          delivery_fee_override: Optional[float] = None, delivery_to_owner: bool = True) -> Dict:
     """
     Price a rental. The deposit is a card hold released on return, so it is
     shown separately from what the renter actually pays.
@@ -477,7 +499,11 @@ def quote(daily_price: float, deposit: float, days: int,
     discount = rental * WEEKLY_DISCOUNT if days >= 7 else 0.0
     rental -= discount
     service_fee = rental * RENTER_SERVICE_FEE
-    d_fee = delivery_fee(miles, hour) if delivery else 0.0
+    if delivery_fee_override is not None:
+        d_fee = round(delivery_fee_override, 2)          # e.g. an Uber Direct quote plus markup
+    else:
+        d_fee = delivery_fee(miles, hour) if delivery else 0.0
+    owner_delivery = d_fee if delivery_to_owner else 0.0
     return {
         'days': days,
         'daily_price': round(daily_price, 2),
@@ -487,7 +513,8 @@ def quote(daily_price: float, deposit: float, days: int,
         'delivery_fee': d_fee,
         'total_charge': round(rental + service_fee + d_fee, 2),
         'deposit_hold': round(deposit, 2),
-        # Owner keeps the rental minus commission, plus the delivery fee for driving it over
-        'owner_payout': round(rental * (1 - OWNER_COMMISSION) + d_fee, 2),
-        'platform_revenue': round(rental * OWNER_COMMISSION + service_fee, 2),
+        # Owner keeps the rental minus commission, plus the delivery fee if they drive it over
+        'owner_payout': round(rental * (1 - OWNER_COMMISSION) + owner_delivery, 2),
+        # Courier fees are collected by the platform, which pays the courier out of them
+        'platform_revenue': round(rental * OWNER_COMMISSION + service_fee + (d_fee - owner_delivery), 2),
     }

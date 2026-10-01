@@ -7,6 +7,7 @@
 # - Wires it to the nraoai Azure OpenAI resource (key read straight from Azure, never printed)
 # - Checks the GPT-5.6 deployments exist; photos go to Sol, video frames to Luna
 # - Creates private blob containers in nradls and gives the app's managed identity access to just those
+# - Creates an Azure Maps account (ZIP codes -> city/state) the app reads with its managed identity
 # - Clones this repo and zip-deploys it; Azure installs requirements.txt during the deploy
 #
 # Safe to re-run: it updates settings and redeploys the latest code on BRANCH.
@@ -27,6 +28,7 @@ MEDIA_CONTAINER="toolshare-media"         # listing + profile photos (private; s
 BACKUP_CONTAINER="toolshare-backups"      # database backups from the admin page
 PHOTO_TIER="sol"                          # photos are read by Sol
 VIDEO_TIER="luna"                         # video frames are read by Luna
+MAPS_NAME="toolshare-maps"                # Azure Maps (Gen2): ZIP + address lookups; free tier covers a small app
 # ---------------------------------------------------------------------------
 
 step() { printf '\n==> %s\n' "$*"; }
@@ -100,6 +102,25 @@ for c in "$MEDIA_CONTAINER" "$BACKUP_CONTAINER"; do
   fi
 done
 
+step "Azure Maps: $MAPS_NAME"
+if az maps account show -g "$PLAN_RG" -n "$MAPS_NAME" --query name -o tsv >/dev/null 2>&1; then
+  echo "exists"
+else
+  az maps account create -g "$PLAN_RG" -n "$MAPS_NAME" --sku G2 --kind Gen2 --accept-tos --output none 2>/dev/null \
+    || az maps account create -g "$PLAN_RG" -n "$MAPS_NAME" --sku G2 --kind Gen2 --location eastus --accept-tos --output none \
+    || fail "Could not create Azure Maps account $MAPS_NAME"
+  echo "created"
+fi
+MAPS_ID=$(az maps account show -g "$PLAN_RG" -n "$MAPS_NAME" --query id -o tsv)
+MAPS_CLIENT_ID=$(az maps account show -g "$PLAN_RG" -n "$MAPS_NAME" --query properties.uniqueId -o tsv)
+if [ "$(az role assignment list --assignee "$PRINCIPAL_ID" --scope "$MAPS_ID" --role "Azure Maps Data Reader" --query "length(@)" -o tsv)" != "0" ]; then
+  echo "Azure Maps Data Reader already assigned"
+else
+  az role assignment create --assignee-object-id "$PRINCIPAL_ID" --assignee-principal-type ServicePrincipal \
+    --role "Azure Maps Data Reader" --scope "$MAPS_ID" --output none
+  echo "Azure Maps Data Reader assigned (no keys: the app signs in with its managed identity)"
+fi
+
 step "App settings (values are not printed)"
 EXISTING_SETTINGS=$(az webapp config appsettings list -g "$PLAN_RG" -n "$APP_NAME" --query "[].name" -o tsv)
 SETTINGS=(
@@ -116,6 +137,7 @@ SETTINGS=(
   "AZURE_STORAGE_ACCOUNT=$STORAGE_ACCOUNT"
   "MEDIA_CONTAINER=$MEDIA_CONTAINER"
   "BACKUP_CONTAINER=$BACKUP_CONTAINER"
+  "AZURE_MAPS_CLIENT_ID=$MAPS_CLIENT_ID"
 )
 # Keep the secret key stable across re-runs so logins/sessions survive redeploys
 if ! grep -qx "FLASK_SECRET_KEY" <<< "$EXISTING_SETTINGS"; then
@@ -131,7 +153,7 @@ if ! grep -qx "ADMIN_PASSWORD" <<< "$EXISTING_SETTINGS"; then
 fi
 az webapp config appsettings set -g "$PLAN_RG" -n "$APP_NAME" --settings "${SETTINGS[@]}" --output none
 unset AOAI_KEY SETTINGS
-echo "set: ENDPOINT_URL, AZURE_OPENAI_API_KEY, DEPLOYMENT_*, PHOTO_TIER=$PHOTO_TIER, VIDEO_TIER=$VIDEO_TIER, TOOLS_DB_PATH, UPLOAD_FOLDER, SCM_DO_BUILD_DURING_DEPLOYMENT, AZURE_STORAGE_ACCOUNT, *_CONTAINER, FLASK_SECRET_KEY, EVAL_KEY, ADMIN_PASSWORD"
+echo "set: ENDPOINT_URL, AZURE_OPENAI_API_KEY, DEPLOYMENT_*, PHOTO_TIER=$PHOTO_TIER, VIDEO_TIER=$VIDEO_TIER, TOOLS_DB_PATH, UPLOAD_FOLDER, SCM_DO_BUILD_DURING_DEPLOYMENT, AZURE_STORAGE_ACCOUNT, *_CONTAINER, AZURE_MAPS_CLIENT_ID, FLASK_SECRET_KEY, EVAL_KEY, ADMIN_PASSWORD"
 
 step "Runtime configuration"
 az webapp config set -g "$PLAN_RG" -n "$APP_NAME" --output none \

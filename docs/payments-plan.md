@@ -55,4 +55,4 @@ Card fees are roughly 2.9% + 30¢ in the US; check Stripe's pricing page for cur
 2. Protection fee: a flat $1, or 10% with a $0.50 minimum?
 3. Owner protection cap per incident: $500 to start?
 4. Renter damage deductible: $50, $100, or nothing?
-5. Should toolshare take a cut of delivery fees, and how much?
+5. Should toolshare take a cut of delivery fees, and how much? *(Courier trips are built with Uber's fee + 15% + $1 as a placeholder; owner drop-off fees go fully to the owner. Both are one setting to change.)*

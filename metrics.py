@@ -47,6 +47,12 @@ def kpis(db):
         'ai_cost_30d': round(_one(db, "SELECT SUM(value) FROM events WHERE event IN ('photo_analyzed', 'eval_case') AND ts >= ?", (d30,)), 2),
         'ai_avg_seconds_7d': round(_one(db, "SELECT AVG(duration) FROM events WHERE event = 'photo_analyzed' AND ts >= ?", (d7,)), 1),
         'upload_limited_7d': _one(db, "SELECT COUNT(*) FROM events WHERE event = 'upload_limited' AND ts >= ?", (d7,)),
+
+        'courier_trips_30d': _one(db, 'SELECT COUNT(*) FROM deliveries WHERE live = 1 AND created_at >= ?', (d30,)),
+        'courier_test_trips_30d': _one(db, 'SELECT COUNT(*) FROM deliveries WHERE live = 0 AND created_at >= ?', (d30,)),
+        'courier_cost_30d': round(_one(db, "SELECT SUM(fee_cents) FROM deliveries WHERE live = 1 AND status != 'canceled' "
+                                           "AND created_at >= ?", (d30,)) / 100, 2),
+        'courier_bookings': _one(db, f"SELECT COUNT(*) FROM bookings WHERE delivery_method = 'courier' AND {live_bookings}"),
     }
 
 

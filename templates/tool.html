@@ -9,7 +9,7 @@
         <h1 class="posting-title">{{ tool.name }}</h1>
         <div class="posting-sub">
             <span class="price">{{ tool.daily_price | money }}/day</span>
-            <span>{{ tool.neighborhood | lower }} · {{ miles }} mi away</span>
+            <span>{{ place_label(tool) | lower }} · {{ miles }} mi away</span>
             <span>posted by <a href="{{ url_for('profile', user_id=tool.owner_id) }}">{{ tool.owner_name }}</a></span>
             {% if tool.owner_is_demo %}<span class="tag" title="Example listing to show how toolshare works">sample listing</span>{% endif %}
         </div>
@@ -60,7 +60,7 @@
         <a class="owner-card" href="{{ url_for('profile', user_id=tool.owner_id) }}">
             {% if tool.owner_avatar %}<img class="avatar avatar-md" src="{{ url_for('uploaded_file', filename=tool.owner_avatar) }}" alt="">
             {% else %}<span class="avatar avatar-md avatar-initials">{{ tool.owner_name | initials }}</span>{% endif %}
-            <span><b>{{ tool.owner_name }}</b><span class="muted small">{{ tool.neighborhood | lower }}{% if tool.owner_since and not tool.owner_is_demo %} · member since {{ tool.owner_since[:7] }}{% endif %}</span></span>
+            <span><b>{{ tool.owner_name }}</b><span class="muted small">{{ place_label(tool) | lower }}{% if tool.owner_since and not tool.owner_is_demo %} · member since {{ tool.owner_since[:7] }}{% endif %}</span></span>
         </a>
         {% if current_user and tool.owner_id == current_user.id %}
         <div class="note">This is your listing. Manage it from <a href="{{ url_for('garage') }}">my garage</a>.</div>
@@ -73,10 +73,29 @@
                 <label>pick up<input type="date" name="start" min="{{ today }}" value="{{ today }}" required></label>
                 <label>return<input type="date" name="end" min="{{ today }}" value="{{ today }}" required></label>
             </div>
-            <label class="inline">
-                <input type="checkbox" name="delivery" value="1" {{ 'disabled' if miles > delivery_max }}>
-                <span>deliver it to me{{ ' (only within %d mi)' % delivery_max if miles > delivery_max }}</span>
-            </label>
+            <fieldset class="delivery-options">
+                <legend class="field-label">getting it</legend>
+                <label class="inline"><input type="radio" name="delivery_method" value="pickup" checked> <span>I'll pick it up <small>free</small></span></label>
+                <label class="inline"><input type="radio" name="delivery_method" value="owner" {{ 'disabled' if not owner_delivers }}>
+                    <span>owner drops it off <small>{{ 'priced by distance' if owner_delivers else ("owner doesn't deliver" if not tool.owner_offers_delivery else 'only within %d mi' % delivery_max) }}</small></span></label>
+                {% if courier_ok %}
+                <label class="inline"><input type="radio" name="delivery_method" value="courier">
+                    <span>courier (Uber) both ways <small>{{ 'test mode · ' if courier_test_mode }}priced for your address</small></span></label>
+                {% endif %}
+            </fieldset>
+            {% if courier_ok %}
+            <div class="courier-fields" id="courierFields" hidden>
+                <label>delivery address<input name="dropoff_street" maxlength="120" autocomplete="street-address" value="{{ current_user.street_address or '' if current_user }}" placeholder="123 Main St, Apt 4"></label>
+                <div class="row">
+                    <label>city<input name="dropoff_city" maxlength="60" value="{{ current_user.city or '' if current_user }}"></label>
+                    <label>state<input name="dropoff_region" maxlength="2" value="{{ current_user.region or '' if current_user }}" placeholder="CO"></label>
+                    <label>ZIP<input name="dropoff_postal" maxlength="5" inputmode="numeric" value="{{ current_user.postal_code or '' if current_user }}"></label>
+                </div>
+                <label>mobile for the courier<input type="tel" name="renter_phone" value="{{ current_user.phone or '' if current_user }}" placeholder="(303) 555-0100"></label>
+                <button type="button" class="btn btn-small" id="courierQuote">get courier price</button>
+                <span class="hint courier-status" id="courierStatus">Only shared with the courier.</span>
+            </div>
+            {% endif %}
             <label>delivery / pickup time
                 <select name="hour">
                     {% for h in range(6, 23) %}
